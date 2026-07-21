@@ -27,5 +27,12 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    return build("src/pong/main.c", OUT_DIR "pong") ? 0 : 1;
+    if (!build("src/pong/main.c", OUT_DIR "pong")) {
+        nob_log(NOB_ERROR, "Could not build pong");
+    }
+    if (!build("src/commander/main.c", OUT_DIR "commander")) {
+        nob_log(NOB_ERROR, "Could not build pong");
+    }
+
+    return 0;
 }
