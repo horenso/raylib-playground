@@ -28,6 +28,12 @@ typedef enum {
 } NodeType;
 
 typedef enum {
+    DIRECTORY_ENTRY_FILES,
+    DIRECTORY_ENTRY_FOLDERS,
+    DIRECTORY_ENTRY_BOTH,
+} DirectoryEntryType;
+
+typedef enum {
     INTERACTION_IDLE,
     INTERACTION_PANNING,
     INTERACTION_KNIFE,
@@ -65,6 +71,8 @@ typedef struct {
     bool has_evaluated;
     bool text_editing;
     char parameter[128];
+    DirectoryEntryType directory_entry_type;
+    bool directory_recursive;
     bool filter_case_sensitive;
     bool filter_whole_word;
     bool filter_use_regex;

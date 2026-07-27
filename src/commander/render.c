@@ -159,6 +159,18 @@ void DrawNodePorts(GraphContext *graph, Node *node) {
     }
 }
 
+static bool DrawNodeOptionButton(GraphContext *graph, Node *node, Rectangle bounds, const char *label, bool active,
+                                 float font_size) {
+    Color background = active ? (Color){85, 156, 228, 255} : (Color){48, 55, 70, 255};
+    DrawRectangleRec(bounds, background);
+    DrawRectangleLinesEx(bounds, CanvasZoom(graph), (Color){75, 84, 101, 255});
+    float text_width = MeasureTextEx(fonts.node_body, label, font_size, 0).x;
+    DrawInterfaceText(fonts.node_body, label, bounds.x + (bounds.width - text_width) * 0.5f,
+                      bounds.y + (bounds.height - font_size) * 0.5f, font_size, COLOR_TEXT);
+    return NodeOwnsMouse(graph, node) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+           CheckCollisionPointRec(GetMousePosition(), bounds);
+}
+
 void DrawNodeContent(GraphContext *graph, Node *node) {
     Rectangle bounds = NodeScreenBounds(graph, node);
     float zoom = CanvasZoom(graph);
@@ -189,7 +201,54 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
             snprintf(graph->status, sizeof(graph->status), "%s and downstream nodes are dirty", node->title);
         }
 
-        if (node->type == NODE_STRING_FILTER) {
+        if (node->type == NODE_DIRECTORY_LIST) {
+            float label_x = bounds.x + 14.0f * zoom;
+            float button_x = bounds.x + 60.0f * zoom;
+            float type_y = bounds.y + (text_box_y + 38.0f) * zoom;
+            float depth_y = bounds.y + (text_box_y + 68.0f) * zoom;
+            float button_height = 24.0f * zoom;
+            float gap = 5.0f * zoom;
+            float label_y_offset = (24.0f - BODY_TEXT_SIZE) * 0.5f * zoom;
+
+            DrawInterfaceText(fonts.node_body, "Type", label_x, type_y + label_y_offset, body_font_size, COLOR_MUTED);
+            struct {
+                const char *label;
+                DirectoryEntryType type;
+                float width;
+            } type_buttons[] = {
+                {"Files", DIRECTORY_ENTRY_FILES, 50.0f},
+                {"Folders", DIRECTORY_ENTRY_FOLDERS, 70.0f},
+                {"Both", DIRECTORY_ENTRY_BOTH, 50.0f},
+            };
+            float x = button_x;
+            for (int i = 0; i < 3; i++) {
+                Rectangle button = {x, type_y, type_buttons[i].width * zoom, button_height};
+                if (DrawNodeOptionButton(graph, node, button, type_buttons[i].label,
+                                         node->directory_entry_type == type_buttons[i].type, body_font_size) &&
+                    node->directory_entry_type != type_buttons[i].type) {
+                    node->directory_entry_type = type_buttons[i].type;
+                    MarkNodeDirty(graph, node->id);
+                    TextCopy(graph->status, "Files type changed - downstream nodes are dirty");
+                }
+                x += button.width + gap;
+            }
+
+            DrawInterfaceText(fonts.node_body, "Depth", label_x, depth_y + label_y_offset, body_font_size, COLOR_MUTED);
+            Rectangle one_layer = {button_x, depth_y, 82.0f * zoom, button_height};
+            Rectangle recursive = {one_layer.x + one_layer.width + gap, depth_y, 94.0f * zoom, button_height};
+            if (DrawNodeOptionButton(graph, node, one_layer, "One layer", !node->directory_recursive, body_font_size) &&
+                node->directory_recursive) {
+                node->directory_recursive = false;
+                MarkNodeDirty(graph, node->id);
+                TextCopy(graph->status, "Files depth changed - downstream nodes are dirty");
+            }
+            if (DrawNodeOptionButton(graph, node, recursive, "Recursive", node->directory_recursive, body_font_size) &&
+                !node->directory_recursive) {
+                node->directory_recursive = true;
+                MarkNodeDirty(graph, node->id);
+                TextCopy(graph->status, "Files depth changed - downstream nodes are dirty");
+            }
+        } else if (node->type == NODE_STRING_FILTER) {
             float btn_y = text_box_y + 36.0f;
             float btn_h = 24.0f;
             float btn_w = 34.0f;
@@ -292,7 +351,7 @@ bool MouseOverNodeControl(GraphContext *graph, Node *node, Vector2 mouse) {
     Rectangle b = NodeScreenBounds(graph, node);
     float z = CanvasZoom(graph);
     float control_y = NODE_HEADER_HEIGHT + 10.0f;
-    float control_h = node->type == NODE_STRING_FILTER ? 76.0f : 42.0f;
+    float control_h = node->type == NODE_DIRECTORY_LIST ? 110.0f : node->type == NODE_STRING_FILTER ? 76.0f : 42.0f;
     return CheckCollisionPointRec(mouse,
                                   (Rectangle){b.x + 10 * z, b.y + control_y * z, b.width - 20 * z, control_h * z});
 }

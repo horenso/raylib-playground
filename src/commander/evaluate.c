@@ -59,6 +59,18 @@ static void ReadLines(FILE *stream, Port *port) {
     }
 }
 
+static void AppendDirectoryEntries(Node *node, Port *output, FilePathList entries) {
+    for (unsigned int i = 0; output && i < entries.count && output->item_count < MAX_ITEMS; i++) {
+        bool is_folder = DirectoryExists(entries.paths[i]);
+        bool include = node->directory_entry_type == DIRECTORY_ENTRY_BOTH ||
+                       (node->directory_entry_type == DIRECTORY_ENTRY_FOLDERS && is_folder) ||
+                       (node->directory_entry_type == DIRECTORY_ENTRY_FILES && !is_folder);
+        if (include) {
+            TextCopy(output->items[output->item_count++], entries.paths[i]);
+        }
+    }
+}
+
 bool EvaluateNode(GraphContext *graph, Node *node, int depth) {
     if (!node) {
         return false;
@@ -97,13 +109,22 @@ bool EvaluateNode(GraphContext *graph, Node *node, int depth) {
     Port *output = NodeOutputPort(graph, node, 0);
 
     if (node->type == NODE_DIRECTORY_LIST) {
-        FilePathList files = LoadDirectoryFiles(node->parameter);
-        for (unsigned int i = 0; output && i < files.count && output->item_count < MAX_ITEMS; i++) {
-            if (!DirectoryExists(files.paths[i])) {
-                TextCopy(output->items[output->item_count++], files.paths[i]);
+        if (node->directory_recursive) {
+            if (node->directory_entry_type != DIRECTORY_ENTRY_FOLDERS) {
+                FilePathList files = LoadDirectoryFilesEx(node->parameter, NULL, true);
+                AppendDirectoryEntries(node, output, files);
+                UnloadDirectoryFiles(files);
             }
+            if (node->directory_entry_type != DIRECTORY_ENTRY_FILES) {
+                FilePathList folders = LoadDirectoryFilesEx(node->parameter, "DIRS*", true);
+                AppendDirectoryEntries(node, output, folders);
+                UnloadDirectoryFiles(folders);
+            }
+        } else {
+            FilePathList entries = LoadDirectoryFiles(node->parameter);
+            AppendDirectoryEntries(node, output, entries);
+            UnloadDirectoryFiles(entries);
         }
-        UnloadDirectoryFiles(files);
     } else if (source_port && node->type == NODE_STRING_FILTER) {
         if (node->filter_use_regex) {
             int flags = REG_EXTENDED | REG_NOSUB;

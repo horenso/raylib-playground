@@ -76,6 +76,8 @@ Node *AddNode(GraphContext *graph, NodeType type, Vector2 position) {
     case NODE_DIRECTORY_LIST:
         TextCopy(node->title, "Files");
         TextCopy(node->parameter, ".");
+        node->directory_entry_type = DIRECTORY_ENTRY_FILES;
+        node->bounds.height = 220;
         AddPort(graph, node, "Files", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 112);
         break;
     case NODE_STRING_FILTER:
