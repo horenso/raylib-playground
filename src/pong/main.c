@@ -138,15 +138,13 @@ void update(GameInput input, GameState *state) {
     const float paddle_max_down = SCREEN_HEIGHT - PADDLE_HEIGHT;
 
     if (input.move_paddle_left_down) {
-        state->paddle_left =
-            fminf(paddle_max_down, state->paddle_left + PADDLE_SPEED);
+        state->paddle_left = fminf(paddle_max_down, state->paddle_left + PADDLE_SPEED);
     }
     if (input.move_paddle_left_up) {
         state->paddle_left = fmaxf(0.0f, state->paddle_left - PADDLE_SPEED);
     }
     if (input.move_paddle_right_down) {
-        state->paddle_right =
-            fminf(paddle_max_down, state->paddle_right + PADDLE_SPEED);
+        state->paddle_right = fminf(paddle_max_down, state->paddle_right + PADDLE_SPEED);
     }
     if (input.move_paddle_right_up) {
         state->paddle_right = fmaxf(0.0f, state->paddle_right - PADDLE_SPEED);
@@ -162,24 +160,17 @@ void update(GameInput input, GameState *state) {
 
     const bool is_ball_touching_paddle_left =
         (ball_left >= 0.0f && ball_left <= PADDLE_WIDTH) &&
-        (ball_bottom >= state->paddle_left &&
-         ball_top <= state->paddle_left + PADDLE_HEIGHT);
+        (ball_bottom >= state->paddle_left && ball_top <= state->paddle_left + PADDLE_HEIGHT);
 
     const bool is_ball_touching_paddle_right =
-        (ball_right >= SCREEN_WIDTH - PADDLE_WIDTH &&
-         ball_right <= SCREEN_WIDTH) &&
-        (ball_bottom >= state->paddle_right &&
-         ball_top <= state->paddle_right + PADDLE_HEIGHT);
+        (ball_right >= SCREEN_WIDTH - PADDLE_WIDTH && ball_right <= SCREEN_WIDTH) &&
+        (ball_bottom >= state->paddle_right && ball_top <= state->paddle_right + PADDLE_HEIGHT);
 
     if (is_ball_touching_paddle_left || is_ball_touching_paddle_right) {
-        const float speed = sqrtf(state->ball_dx * state->ball_dx +
-                                  state->ball_dy * state->ball_dy);
-        const float paddle_y = is_ball_touching_paddle_left
-                                   ? state->paddle_left
-                                   : state->paddle_right;
+        const float speed = sqrtf(state->ball_dx * state->ball_dx + state->ball_dy * state->ball_dy);
+        const float paddle_y = is_ball_touching_paddle_left ? state->paddle_left : state->paddle_right;
         const float paddle_center_y = paddle_y + (PADDLE_HEIGHT / 2.0f);
-        const float hit_factor =
-            (state->ball_y - paddle_center_y) / (PADDLE_HEIGHT / 2.0f);
+        const float hit_factor = (state->ball_y - paddle_center_y) / (PADDLE_HEIGHT / 2.0f);
 
         const float max_angle = 60.0f * DEG2RAD;
         const float bounce_angle = hit_factor * max_angle;
@@ -224,14 +215,11 @@ void draw(GameState state) {
 
     Vector2 start = {SCREEN_WIDTH / 2.0f, 0};
     Vector2 end = {SCREEN_WIDTH / 2.0f, SCREEN_HEIGHT};
-    DrawLineDashed(start, end, MIDDLE_LINE_DASH_SIZE, MIDDLE_LINE_DASH_SPACE,
-                   WHITE);
+    DrawLineDashed(start, end, MIDDLE_LINE_DASH_SIZE, MIDDLE_LINE_DASH_SPACE, WHITE);
 
-    const char *score =
-        TextFormat("%d   %d", state.score_left, state.score_right);
+    const char *score = TextFormat("%d   %d", state.score_left, state.score_right);
     int score_text_size = MeasureText(score, SCORE_FONT_SIZE);
-    DrawText(score, (int)((SCREEN_WIDTH - score_text_size) / 2),
-             (int)SCORE_POSITION_Y, SCORE_FONT_SIZE, WHITE);
+    DrawText(score, (int)((SCREEN_WIDTH - score_text_size) / 2), (int)SCORE_POSITION_Y, SCORE_FONT_SIZE, WHITE);
 
     Vector2 ball_position = {
         .x = state.ball_x,
