@@ -29,38 +29,37 @@ void DrawCanvasGrid(GraphContext *graph) {
 
     for (int i = first_x; i <= last_x; i++) {
         Vector2 p = GetWorldToScreen2D((Vector2){i * step, 0}, camera);
-        DrawLine((int)p.x, (int)canvas.y, (int)p.x, (int)(canvas.y + canvas.height),
-                 i % 4 == 0 ? COLOR_GRID_MAJOR : COLOR_GRID_MINOR);
+        DrawLineEx((Vector2){p.x, canvas.y}, (Vector2){p.x, canvas.y + canvas.height}, UiSize(graph, 1.0f),
+                   i % 4 == 0 ? COLOR_GRID_MAJOR : COLOR_GRID_MINOR);
     }
     for (int i = first_y; i <= last_y; i++) {
         Vector2 p = GetWorldToScreen2D((Vector2){0, i * step}, camera);
-        DrawLine((int)canvas.x, (int)p.y, (int)(canvas.x + canvas.width), (int)p.y,
-                 i % 4 == 0 ? COLOR_GRID_MAJOR : COLOR_GRID_MINOR);
+        DrawLineEx((Vector2){canvas.x, p.y}, (Vector2){canvas.x + canvas.width, p.y}, UiSize(graph, 1.0f),
+                   i % 4 == 0 ? COLOR_GRID_MAJOR : COLOR_GRID_MINOR);
     }
 }
 
-void DrawConnection(Vector2 from, Vector2 to, Color color, float thickness) {
-    float tangent = Clamp(fabsf(to.x - from.x) * 0.5f, 55, 180);
+void DrawConnection(GraphContext *graph, Vector2 from, Vector2 to, Color color, float thickness_units) {
+    float tangent = Clamp(fabsf(to.x - from.x) * 0.5f, UiSize(graph, 55.0f), UiSize(graph, 180.0f));
     Vector2 points[4] = {from, {from.x + tangent, from.y}, {to.x - tangent, to.y}, to};
-    DrawSplineBezierCubic(points, 4, thickness, color);
+    DrawSplineBezierCubic(points, 4, UiSize(graph, thickness_units), color);
 }
 
-void DrawKnife(Vector2 start, Vector2 end, float scale) {
+void DrawKnife(GraphContext *graph, Vector2 start, Vector2 end) {
     Color glow = {255, 91, 105, 70};
     Color blade = {255, 220, 224, 255};
-    DrawLineEx(start, end, 7 * scale, glow);
-    DrawLineEx(start, end, 2 * scale, blade);
-    DrawCircleV(start, 4 * scale, blade);
-    DrawCircleV(end, 4 * scale, blade);
+    DrawLineEx(start, end, UiSize(graph, 7.0f), glow);
+    DrawLineEx(start, end, UiSize(graph, 2.0f), blade);
+    DrawCircleV(start, UiSize(graph, 4.0f), blade);
+    DrawCircleV(end, UiSize(graph, 4.0f), blade);
 }
 
 static Rectangle NodeRunButtonBounds(GraphContext *graph, Node *node) {
     Rectangle bounds = NodeScreenBounds(graph, node);
-    float zoom = CanvasZoom(graph);
-    float button_size = 22.0f * zoom;
+    float button_size = CanvasSize(graph, 22.0f);
     return (Rectangle){
-        bounds.x + bounds.width - 12.0f * zoom - button_size,
-        bounds.y + (NODE_HEADER_HEIGHT * zoom - button_size) * 0.5f,
+        bounds.x + bounds.width - CanvasSize(graph, 12.0f) - button_size,
+        bounds.y + (CanvasSize(graph, NODE_HEADER_HEIGHT) - button_size) * 0.5f,
         button_size,
         button_size,
     };
@@ -72,31 +71,32 @@ static bool NodeOwnsMouse(GraphContext *graph, Node *node) {
 
 void DrawNodeShell(GraphContext *graph, Node *node) {
     Rectangle bounds = NodeScreenBounds(graph, node);
-    float zoom = CanvasZoom(graph);
+    float unit = CanvasUnit(graph);
 
     DrawRectangleRec(bounds, COLOR_NODE);
-    Rectangle header = {bounds.x, bounds.y, bounds.width, NODE_HEADER_HEIGHT * zoom};
+    Rectangle header = {bounds.x, bounds.y, bounds.width, CanvasSize(graph, NODE_HEADER_HEIGHT)};
     DrawRectangleRec(header, COLOR_NODE_HEADER);
 
     bool knife_hit = graph->knife_active && NodeIntersectsKnife(graph, node, graph->knife_start, GetMousePosition());
-    float border_w = knife_hit || graph->selected_node_id == node->id ? 2.0f : 1.0f;
+    float border_w = CanvasSize(graph, knife_hit || graph->selected_node_id == node->id ? 2.0f : 1.0f);
     Color border_color = knife_hit                             ? (Color){255, 76, 92, 255}
                          : graph->selected_node_id == node->id ? COLOR_NODE_SELECTED
                                                                : NodeStateColor(node);
     // Header/options separator and the dedicated connector/status section.
-    DrawLineEx((Vector2){bounds.x, bounds.y + NODE_HEADER_HEIGHT * zoom},
-               (Vector2){bounds.x + bounds.width, bounds.y + NODE_HEADER_HEIGHT * zoom}, 1.0f, border_color);
-    float connector_y = bounds.y + bounds.height - NodeConnectorSectionHeight(node) * zoom;
+    DrawLineEx((Vector2){bounds.x, bounds.y + CanvasSize(graph, NODE_HEADER_HEIGHT)},
+               (Vector2){bounds.x + bounds.width, bounds.y + CanvasSize(graph, NODE_HEADER_HEIGHT)}, unit,
+               border_color);
+    float connector_y = bounds.y + bounds.height - CanvasSize(graph, NodeConnectorSectionHeight(node));
     DrawRectangleRec((Rectangle){bounds.x, connector_y, bounds.width, bounds.y + bounds.height - connector_y},
                      (Color){29, 34, 44, 255});
-    DrawLineEx((Vector2){bounds.x, connector_y}, (Vector2){bounds.x + bounds.width, connector_y}, 1.0f, border_color);
+    DrawLineEx((Vector2){bounds.x, connector_y}, (Vector2){bounds.x + bounds.width, connector_y}, unit, border_color);
     DrawRectangleLinesEx(bounds, border_w, border_color);
 
     // Port labels live beside their connection points in the bottom section.
-    float chip_h = 16.0f * zoom;
-    float chip_pad = 6.0f * zoom;
-    float chip_font = ScaledFontSize(BODY_TEXT_SIZE * 0.85f, zoom);
-    float edge_pad = 14.0f * zoom;
+    float chip_h = CanvasSize(graph, 16.0f);
+    float chip_pad = CanvasSize(graph, 6.0f);
+    float chip_font = ScaledFontSize(BODY_TEXT_SIZE * 0.85f, unit);
+    float edge_pad = CanvasSize(graph, 14.0f);
 
     for (int direction = PORT_DIR_INPUT; direction <= PORT_DIR_OUTPUT; direction++) {
         int count = direction == PORT_DIR_INPUT ? node->input_count : node->output_count;
@@ -114,24 +114,25 @@ void DrawNodeShell(GraphContext *graph, Node *node) {
                 direction == PORT_DIR_INPUT ? bounds.x + edge_pad : bounds.x + bounds.width - edge_pad - chip_w;
             Rectangle chip = {chip_x, port_pos.y - chip_h * 0.5f, chip_w, chip_h};
             DrawRectangleRec(chip, (Color){port_color.r, port_color.g, port_color.b, 40});
-            DrawRectangleLinesEx(chip, 1, (Color){port_color.r, port_color.g, port_color.b, 120});
+            DrawRectangleLinesEx(chip, unit, (Color){port_color.r, port_color.g, port_color.b, 120});
             DrawInterfaceText(fonts.node_small, port->name, chip.x + chip_pad, chip.y + (chip_h - chip_font) * 0.5f,
                               chip_font, port_color);
         }
     }
 
     // The top section is intentionally quiet: title on the left, branch run on the right.
-    float title_font_size = ScaledFontSize(TITLE_TEXT_SIZE, zoom);
+    float title_font_size = ScaledFontSize(TITLE_TEXT_SIZE, unit);
     Rectangle run_btn = NodeRunButtonBounds(graph, node);
-    DrawInterfaceText(fonts.title, node->title, bounds.x + 14.0f * zoom,
-                      bounds.y + (NODE_HEADER_HEIGHT * zoom - title_font_size) * 0.5f, title_font_size, COLOR_TEXT);
+    DrawInterfaceText(fonts.title, node->title, bounds.x + CanvasSize(graph, 14.0f),
+                      bounds.y + (CanvasSize(graph, NODE_HEADER_HEIGHT) - title_font_size) * 0.5f, title_font_size,
+                      COLOR_TEXT);
 
     bool run_hovered = NodeOwnsMouse(graph, node) && CheckCollisionPointRec(GetMousePosition(), run_btn);
     Color run_color = NodeStateColor(node);
     Color run_background = run_hovered ? (Color){75, 84, 101, 255} : (Color){38, 44, 56, 255};
     DrawRectangleRec(run_btn, run_background);
-    DrawRectangleLinesEx(run_btn, zoom, run_color);
-    float play_pad = 6.0f * zoom;
+    DrawRectangleLinesEx(run_btn, unit, run_color);
+    float play_pad = CanvasSize(graph, 6.0f);
     DrawTriangle((Vector2){run_btn.x + play_pad, run_btn.y + play_pad},
                  (Vector2){run_btn.x + play_pad, run_btn.y + run_btn.height - play_pad},
                  (Vector2){run_btn.x + run_btn.width - play_pad, run_btn.y + run_btn.height * 0.5f}, run_color);
@@ -149,7 +150,7 @@ void DrawNodePorts(GraphContext *graph, Node *node) {
             Port *port = FindPort(graph, ids[i]);
             Vector2 p = PortScreenPosition(graph, port);
             Color color = PortStateColor(graph, port);
-            float r = PORT_RADIUS * CanvasZoom(graph);
+            float r = CanvasSize(graph, PORT_RADIUS);
             DrawCircleSector(p, r, 0, 360, 36, color);
         }
     }
@@ -159,7 +160,7 @@ static bool DrawNodeOptionButton(GraphContext *graph, Node *node, Rectangle boun
                                  float font_size) {
     Color background = active ? (Color){85, 156, 228, 255} : (Color){48, 55, 70, 255};
     DrawRectangleRec(bounds, background);
-    DrawRectangleLinesEx(bounds, CanvasZoom(graph), (Color){75, 84, 101, 255});
+    DrawRectangleLinesEx(bounds, CanvasUnit(graph), (Color){75, 84, 101, 255});
     float text_width = MeasureTextEx(fonts.node_body, label, font_size, 0).x;
     DrawInterfaceText(fonts.node_body, label, bounds.x + (bounds.width - text_width) * 0.5f,
                       bounds.y + (bounds.height - font_size) * 0.5f, font_size, COLOR_TEXT);
@@ -169,15 +170,20 @@ static bool DrawNodeOptionButton(GraphContext *graph, Node *node, Rectangle boun
 
 void DrawNodeContent(GraphContext *graph, Node *node) {
     Rectangle bounds = NodeScreenBounds(graph, node);
-    float zoom = CanvasZoom(graph);
-    float body_font_size = ScaledFontSize(BODY_TEXT_SIZE, zoom);
+    float unit = CanvasUnit(graph);
+    float body_font_size = ScaledFontSize(BODY_TEXT_SIZE, unit);
     Port *output = NodeOutputPort(graph, node, 0);
 
     if (node->type == NODE_DIRECTORY_LIST || node->type == NODE_STRING_FILTER || node->type == NODE_EXEC ||
         node->type == NODE_HTTP_REQUEST) {
         float text_box_y = NODE_HEADER_HEIGHT + 16.0f;
-        Rectangle text_box = {bounds.x + 14 * zoom, bounds.y + text_box_y * zoom, bounds.width - 28 * zoom, 30 * zoom};
-        SetNodeGuiScale(zoom);
+        Rectangle text_box = {
+            bounds.x + CanvasSize(graph, 14.0f),
+            bounds.y + CanvasSize(graph, text_box_y),
+            bounds.width - CanvasSize(graph, 28.0f),
+            CanvasSize(graph, 30.0f),
+        };
+        SetNodeGuiScale(unit);
         char before[128];
         TextCopy(before, node->parameter);
         bool gui_was_locked = GuiIsLocked();
@@ -198,13 +204,13 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
         }
 
         if (node->type == NODE_DIRECTORY_LIST) {
-            float label_x = bounds.x + 14.0f * zoom;
-            float button_x = bounds.x + 60.0f * zoom;
-            float type_y = bounds.y + (text_box_y + 38.0f) * zoom;
-            float depth_y = bounds.y + (text_box_y + 68.0f) * zoom;
-            float button_height = 24.0f * zoom;
-            float gap = 5.0f * zoom;
-            float label_y_offset = (24.0f - BODY_TEXT_SIZE) * 0.5f * zoom;
+            float label_x = bounds.x + CanvasSize(graph, 14.0f);
+            float button_x = bounds.x + CanvasSize(graph, 60.0f);
+            float type_y = bounds.y + CanvasSize(graph, text_box_y + 38.0f);
+            float depth_y = bounds.y + CanvasSize(graph, text_box_y + 68.0f);
+            float button_height = CanvasSize(graph, 24.0f);
+            float gap = CanvasSize(graph, 5.0f);
+            float label_y_offset = CanvasSize(graph, (24.0f - BODY_TEXT_SIZE) * 0.5f);
 
             DrawInterfaceText(fonts.node_body, "Type", label_x, type_y + label_y_offset, body_font_size, COLOR_MUTED);
             struct {
@@ -218,7 +224,7 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
             };
             float x = button_x;
             for (int i = 0; i < 3; i++) {
-                Rectangle button = {x, type_y, type_buttons[i].width * zoom, button_height};
+                Rectangle button = {x, type_y, CanvasSize(graph, type_buttons[i].width), button_height};
                 if (DrawNodeOptionButton(graph, node, button, type_buttons[i].label,
                                          node->directory_entry_type == type_buttons[i].type, body_font_size) &&
                     node->directory_entry_type != type_buttons[i].type) {
@@ -230,8 +236,13 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
             }
 
             DrawInterfaceText(fonts.node_body, "Depth", label_x, depth_y + label_y_offset, body_font_size, COLOR_MUTED);
-            Rectangle one_layer = {button_x, depth_y, 82.0f * zoom, button_height};
-            Rectangle recursive = {one_layer.x + one_layer.width + gap, depth_y, 94.0f * zoom, button_height};
+            Rectangle one_layer = {button_x, depth_y, CanvasSize(graph, 82.0f), button_height};
+            Rectangle recursive = {
+                one_layer.x + one_layer.width + gap,
+                depth_y,
+                CanvasSize(graph, 94.0f),
+                button_height,
+            };
             if (DrawNodeOptionButton(graph, node, one_layer, "One layer", !node->directory_recursive, body_font_size) &&
                 node->directory_recursive) {
                 node->directory_recursive = false;
@@ -266,14 +277,14 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
 
             for (int b = 0; b < 3; b++) {
                 Rectangle btn = {
-                    bounds.x + (start_x + b * (btn_w + gap)) * zoom,
-                    bounds.y + btn_y * zoom,
-                    btn_w * zoom,
-                    btn_h * zoom,
+                    bounds.x + CanvasSize(graph, start_x + b * (btn_w + gap)),
+                    bounds.y + CanvasSize(graph, btn_y),
+                    CanvasSize(graph, btn_w),
+                    CanvasSize(graph, btn_h),
                 };
                 Color bg = *buttons[b].flag ? active_bg : inactive_bg;
                 DrawRectangleRec(btn, bg);
-                DrawRectangleLinesEx(btn, zoom, (Color){75, 84, 101, 255});
+                DrawRectangleLinesEx(btn, unit, (Color){75, 84, 101, 255});
                 float text_w = MeasureTextEx(fonts.node_body, buttons[b].label, body_font_size, 0).x;
                 DrawInterfaceText(fonts.node_body, buttons[b].label, btn.x + (btn.width - text_w) * 0.5f,
                                   btn.y + (btn.height - body_font_size) * 0.5f, body_font_size, btn_text);
@@ -288,14 +299,14 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
 
             const char *mode_label = node->filter_exclude ? "Exclude" : "Include";
             Rectangle mode_btn = {
-                bounds.x + (start_x + 3 * (btn_w + gap)) * zoom,
-                bounds.y + btn_y * zoom,
-                96.0f * zoom,
-                btn_h * zoom,
+                bounds.x + CanvasSize(graph, start_x + 3 * (btn_w + gap)),
+                bounds.y + CanvasSize(graph, btn_y),
+                CanvasSize(graph, 96.0f),
+                CanvasSize(graph, btn_h),
             };
             Color mode_bg = node->filter_exclude ? (Color){190, 82, 92, 255} : active_bg;
             DrawRectangleRec(mode_btn, mode_bg);
-            DrawRectangleLinesEx(mode_btn, zoom, (Color){75, 84, 101, 255});
+            DrawRectangleLinesEx(mode_btn, unit, (Color){75, 84, 101, 255});
             float mode_text_w = MeasureTextEx(fonts.node_body, mode_label, body_font_size, 0).x;
             DrawInterfaceText(fonts.node_body, mode_label, mode_btn.x + (mode_btn.width - mode_text_w) * 0.5f,
                               mode_btn.y + (mode_btn.height - body_font_size) * 0.5f, body_font_size, btn_text);
@@ -314,17 +325,17 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
                                   : node->is_dirty                        ? "NOT RUN"
                                                                           : "CURRENT";
         Color state_color = NodeStateColor(node);
-        float state_y = bounds.y + bounds.height - 21.0f * zoom;
+        float state_y = bounds.y + bounds.height - CanvasSize(graph, 21.0f);
         if (node->type == NODE_EXEC) {
             Port *errors = NodeOutputPort(graph, node, 1);
             DrawInterfaceText(fonts.node_body,
                               TextFormat("%s | %d stdout | %d stderr", state_label, output ? output->item_count : 0,
                                          errors ? errors->item_count : 0),
-                              bounds.x + 14 * zoom, state_y, body_font_size, state_color);
+                              bounds.x + CanvasSize(graph, 14.0f), state_y, body_font_size, state_color);
         } else {
             int count = output ? output->item_count : 0;
             DrawInterfaceText(fonts.node_body, TextFormat("%s | %d item%s", state_label, count, count == 1 ? "" : "s"),
-                              bounds.x + 14 * zoom, state_y, body_font_size, state_color);
+                              bounds.x + CanvasSize(graph, 14.0f), state_y, body_font_size, state_color);
         }
     }
 }
@@ -343,11 +354,14 @@ bool MouseOverNodeControl(GraphContext *graph, Node *node, Vector2 mouse) {
         return true;
     }
     Rectangle b = NodeScreenBounds(graph, node);
-    float z = CanvasZoom(graph);
     float control_y = NODE_HEADER_HEIGHT + 10.0f;
     float control_h = node->type == NODE_DIRECTORY_LIST ? 110.0f : node->type == NODE_STRING_FILTER ? 76.0f : 42.0f;
-    return CheckCollisionPointRec(mouse,
-                                  (Rectangle){b.x + 10 * z, b.y + control_y * z, b.width - 20 * z, control_h * z});
+    return CheckCollisionPointRec(mouse, (Rectangle){
+                                             b.x + CanvasSize(graph, 10.0f),
+                                             b.y + CanvasSize(graph, control_y),
+                                             b.width - CanvasSize(graph, 20.0f),
+                                             CanvasSize(graph, control_h),
+                                         });
 }
 
 static Rectangle PortInspectorBounds(GraphContext *graph, int port_id) {
@@ -356,18 +370,18 @@ static Rectangle PortInspectorBounds(GraphContext *graph, int port_id) {
         return (Rectangle){0};
     }
     Vector2 p = PortScreenPosition(graph, port);
-    float scale = ApplicationScale(graph);
-    float w = 280 * scale, h = 220 * scale;
-    float x = p.x + (PORT_RADIUS + 10) * scale;
+    float w = UiSize(graph, 280.0f);
+    float h = UiSize(graph, 220.0f);
+    float x = p.x + UiSize(graph, PORT_RADIUS + 10.0f);
     float y = p.y - h * 0.3f;
     if (x + w > GetScreenWidth()) {
-        x = p.x - (PORT_RADIUS + 10) * scale - w;
+        x = p.x - UiSize(graph, PORT_RADIUS + 10.0f) - w;
     }
     if (y < ToolbarHeight(graph)) {
-        y = ToolbarHeight(graph) + 4 * scale;
+        y = ToolbarHeight(graph) + UiSize(graph, 4.0f);
     }
     if (y + h > GetScreenHeight() - StatusHeight(graph)) {
-        y = GetScreenHeight() - StatusHeight(graph) - h - 4 * scale;
+        y = GetScreenHeight() - StatusHeight(graph) - h - UiSize(graph, 4.0f);
     }
     return (Rectangle){x, y, w, h};
 }
@@ -384,25 +398,30 @@ void DrawPortInspector(GraphContext *graph, int port_id, bool pinned) {
 
     Rectangle panel = PortInspectorBounds(graph, port_id);
     Color border = pinned ? COLOR_NODE_SELECTED : PortColor(port->data_type);
-    float scale = ApplicationScale(graph);
-    float body_font_size = ScaledFontSize(BODY_TEXT_SIZE, scale);
+    float unit = UiUnit(graph);
+    float body_font_size = ScaledFontSize(BODY_TEXT_SIZE, unit);
 
     DrawRectangleRec(panel, (Color){22, 26, 34, 245});
-    DrawRectangleLinesEx(panel, (pinned ? 2 : 1) * scale, border);
+    DrawRectangleLinesEx(panel, UiSize(graph, pinned ? 2.0f : 1.0f), border);
 
-    float px = panel.x + 10 * scale, py = panel.y + 8 * scale;
+    float px = panel.x + UiSize(graph, 10.0f);
+    float py = panel.y + UiSize(graph, 8.0f);
     DrawInterfaceText(fonts.body,
                       TextFormat("%s  |  %d item%s", port->name, port->item_count, port->item_count == 1 ? "" : "s"),
                       px, py, body_font_size, COLOR_TEXT);
 
-    Rectangle list_bounds = {panel.x + 8 * scale, panel.y + 30 * scale, panel.width - 16 * scale,
-                             panel.height - 38 * scale};
+    Rectangle list_bounds = {
+        panel.x + UiSize(graph, 8.0f),
+        panel.y + UiSize(graph, 30.0f),
+        panel.width - UiSize(graph, 16.0f),
+        panel.height - UiSize(graph, 38.0f),
+    };
     char *entries[MAX_ITEMS];
     int count = port->item_count;
     for (int i = 0; i < count; i++) {
         entries[i] = port->items[i];
     }
-    SetGuiScale(scale);
+    SetGuiScale(unit);
     GuiListViewEx(list_bounds, entries, count, &graph->inspect_scroll, &graph->inspect_active, NULL);
 }
 
@@ -414,25 +433,54 @@ bool MouseOverPortInspector(GraphContext *graph, Vector2 mouse) {
 }
 
 void DrawToolbar(GraphContext *graph) {
-    float scale = ApplicationScale(graph);
+    float unit = UiUnit(graph);
     float toolbar_height = ToolbarHeight(graph);
-    float body_font_size = ScaledFontSize(BODY_TEXT_SIZE, scale);
-    SetGuiScale(scale);
+    float body_font_size = ScaledFontSize(BODY_TEXT_SIZE, unit);
+    SetGuiScale(unit);
     DrawRectangle(0, 0, GetScreenWidth(), (int)toolbar_height, (Color){25, 29, 37, 255});
-    DrawLine(0, (int)toolbar_height - 1, GetScreenWidth(), (int)toolbar_height - 1, (Color){59, 67, 82, 255});
+    DrawLineEx((Vector2){0, toolbar_height - unit * 0.5f}, (Vector2){GetScreenWidth(), toolbar_height - unit * 0.5f},
+               unit, (Color){59, 67, 82, 255});
 
-    if (GuiButton((Rectangle){12 * scale, 10 * scale, 132 * scale, 32 * scale}, "#08# Add node")) {
+    if (GuiButton(
+            (Rectangle){
+                UiSize(graph, 12.0f),
+                UiSize(graph, 10.0f),
+                UiSize(graph, 132.0f),
+                UiSize(graph, 32.0f),
+            },
+            "#08# Add node")) {
         graph->add_menu_open = !graph->add_menu_open;
         graph->open_dialog_open = false;
     }
-    if (GuiButton((Rectangle){154 * scale, 10 * scale, 100 * scale, 32 * scale}, "#131# Run")) {
+    if (GuiButton(
+            (Rectangle){
+                UiSize(graph, 154.0f),
+                UiSize(graph, 10.0f),
+                UiSize(graph, 100.0f),
+                UiSize(graph, 32.0f),
+            },
+            "#131# Run")) {
         RunGraph(graph);
     }
-    if (GuiButton((Rectangle){264 * scale, 10 * scale, 100 * scale, 32 * scale}, "#01# Open")) {
+    if (GuiButton(
+            (Rectangle){
+                UiSize(graph, 264.0f),
+                UiSize(graph, 10.0f),
+                UiSize(graph, 100.0f),
+                UiSize(graph, 32.0f),
+            },
+            "#01# Open")) {
         graph->open_dialog_open = !graph->open_dialog_open;
         graph->add_menu_open = false;
     }
-    if (GuiButton((Rectangle){374 * scale, 10 * scale, 100 * scale, 32 * scale}, "#02# Save")) {
+    if (GuiButton(
+            (Rectangle){
+                UiSize(graph, 374.0f),
+                UiSize(graph, 10.0f),
+                UiSize(graph, 100.0f),
+                UiSize(graph, 32.0f),
+            },
+            "#02# Save")) {
         if (graph->current_file[0]) {
             if (SaveGraph(graph, graph->current_file)) {
                 snprintf(graph->status, sizeof(graph->status), "Saved: %.140s", graph->current_file);
@@ -461,16 +509,17 @@ void DrawToolbar(GraphContext *graph) {
     }
 
     const char *fname = graph->current_file[0] ? graph->current_file : "(unsaved)";
-    float scale_button_y = 10 * scale;
-    float scale_button_height = 32 * scale;
-    float scale_button_gap = 6 * scale;
-    float ui_label_width = 104 * scale;
-    float node_label_width = 128 * scale;
-    float right_labels_x = GetScreenWidth() - 12 * scale - ui_label_width - scale_button_gap - node_label_width;
-    float fname_x = 492 * scale;
+    float scale_button_y = UiSize(graph, 10.0f);
+    float scale_button_height = UiSize(graph, 32.0f);
+    float scale_button_gap = UiSize(graph, 6.0f);
+    float ui_label_width = UiSize(graph, 104.0f);
+    float node_label_width = UiSize(graph, 128.0f);
+    float right_labels_x =
+        GetScreenWidth() - UiSize(graph, 12.0f) - ui_label_width - scale_button_gap - node_label_width;
+    float fname_x = UiSize(graph, 492.0f);
     float fname_width = MeasureTextEx(fonts.body, fname, body_font_size, 0).x;
-    if (fname_x + fname_width + 12 * scale < right_labels_x) {
-        DrawInterfaceText(fonts.body, fname, fname_x, 18 * scale, body_font_size, COLOR_MUTED);
+    if (fname_x + fname_width + UiSize(graph, 12.0f) < right_labels_x) {
+        DrawInterfaceText(fonts.body, fname, fname_x, UiSize(graph, 18.0f), body_font_size, COLOR_MUTED);
     }
     if (GuiButton((Rectangle){right_labels_x, scale_button_y, node_label_width, scale_button_height},
                   TextFormat("Node %d%%", (int)(graph->camera.zoom * 100 + 0.5f)))) {
@@ -479,7 +528,7 @@ void DrawToolbar(GraphContext *graph) {
     }
     if (GuiButton((Rectangle){right_labels_x + node_label_width + scale_button_gap, scale_button_y, ui_label_width,
                               scale_button_height},
-                  TextFormat("UI %d%%", (int)(scale * 100 + 0.5f)))) {
+                  TextFormat("UI %d%%", (int)(ApplicationScale(graph) * 100 + 0.5f)))) {
         graph->application_scale = 1.0f;
         TextCopy(graph->status, "Application scale reset to 100%");
     }
@@ -487,12 +536,22 @@ void DrawToolbar(GraphContext *graph) {
     if (graph->add_menu_open) {
         const char *labels[] = {"Files", "Filter", "Exec", "HTTP Request"};
         int label_count = 4;
-        Rectangle menu = {12 * scale, toolbar_height + 4 * scale, 176 * scale, (10 + label_count * 31) * scale};
+        Rectangle menu = {
+            UiSize(graph, 12.0f),
+            toolbar_height + UiSize(graph, 4.0f),
+            UiSize(graph, 176.0f),
+            UiSize(graph, 10.0f + label_count * 31.0f),
+        };
         DrawRectangleRec(menu, (Color){30, 35, 44, 255});
-        DrawRectangleLinesEx(menu, scale, (Color){75, 84, 101, 255});
+        DrawRectangleLinesEx(menu, unit, (Color){75, 84, 101, 255});
         for (int i = 0; i < label_count; i++) {
-            if (GuiButton((Rectangle){18 * scale, toolbar_height + (10 + i * 31) * scale, 164 * scale, 27 * scale},
-                          labels[i])) {
+            Rectangle button = {
+                UiSize(graph, 18.0f),
+                toolbar_height + UiSize(graph, 10.0f + i * 31.0f),
+                UiSize(graph, 164.0f),
+                UiSize(graph, 27.0f),
+            };
+            if (GuiButton(button, labels[i])) {
                 Vector2 center = GetScreenToWorld2D((Vector2){GetScreenWidth() * 0.5f, GetScreenHeight() * 0.5f},
                                                     CanvasCamera(graph));
                 AddNode(graph, (NodeType)i, center);
@@ -502,17 +561,33 @@ void DrawToolbar(GraphContext *graph) {
     }
 
     if (graph->open_dialog_open) {
-        Rectangle dialog = {12 * scale, toolbar_height + 4 * scale, 400 * scale, 52 * scale};
+        Rectangle dialog = {
+            UiSize(graph, 12.0f),
+            toolbar_height + UiSize(graph, 4.0f),
+            UiSize(graph, 400.0f),
+            UiSize(graph, 52.0f),
+        };
         DrawRectangleRec(dialog, (Color){30, 35, 44, 255});
-        DrawRectangleLinesEx(dialog, scale, (Color){75, 84, 101, 255});
-        DrawInterfaceText(fonts.body, "File path:", 22 * scale, toolbar_height + 12 * scale, body_font_size,
-                          COLOR_MUTED);
-        Rectangle input = {100 * scale, toolbar_height + 8 * scale, 220 * scale, 28 * scale};
+        DrawRectangleLinesEx(dialog, unit, (Color){75, 84, 101, 255});
+        DrawInterfaceText(fonts.body, "File path:", UiSize(graph, 22.0f), toolbar_height + UiSize(graph, 12.0f),
+                          body_font_size, COLOR_MUTED);
+        Rectangle input = {
+            UiSize(graph, 100.0f),
+            toolbar_height + UiSize(graph, 8.0f),
+            UiSize(graph, 220.0f),
+            UiSize(graph, 28.0f),
+        };
         static bool editing = false;
         if (GuiTextBox(input, graph->open_dialog_path, sizeof(graph->open_dialog_path), editing)) {
             editing = !editing;
         }
-        if (GuiButton((Rectangle){328 * scale, toolbar_height + 8 * scale, 76 * scale, 28 * scale}, "Load")) {
+        Rectangle load_button = {
+            UiSize(graph, 328.0f),
+            toolbar_height + UiSize(graph, 8.0f),
+            UiSize(graph, 76.0f),
+            UiSize(graph, 28.0f),
+        };
+        if (GuiButton(load_button, "Load")) {
             if (LoadGraph(graph, graph->open_dialog_path)) {
                 TextCopy(graph->current_file, graph->open_dialog_path);
                 snprintf(graph->status, sizeof(graph->status), "Loaded: %.140s", graph->current_file);
@@ -540,19 +615,21 @@ void DrawToolbar(GraphContext *graph) {
 }
 
 void DrawStatusBar(GraphContext *graph) {
-    float scale = ApplicationScale(graph);
-    float body_font_size = ScaledFontSize(BODY_TEXT_SIZE, scale);
+    float unit = UiUnit(graph);
+    float body_font_size = ScaledFontSize(BODY_TEXT_SIZE, unit);
     int height = (int)StatusHeight(graph);
     int y = GetScreenHeight() - height;
     DrawRectangle(0, y, GetScreenWidth(), height, (Color){25, 29, 37, 255});
-    DrawLine(0, y, GetScreenWidth(), y, (Color){59, 67, 82, 255});
-    DrawCircle((int)(14 * scale), (int)(y + 14 * scale), 4 * scale, COLOR_STRING_LIST);
-    DrawInterfaceText(fonts.body, graph->status, 25 * scale, y + 6 * scale, body_font_size, COLOR_MUTED);
+    DrawLineEx((Vector2){0, y + unit * 0.5f}, (Vector2){GetScreenWidth(), y + unit * 0.5f}, unit,
+               (Color){59, 67, 82, 255});
+    DrawCircle((int)UiSize(graph, 14.0f), (int)(y + UiSize(graph, 14.0f)), UiSize(graph, 4.0f), COLOR_STRING_LIST);
+    DrawInterfaceText(fonts.body, graph->status, UiSize(graph, 25.0f), y + UiSize(graph, 6.0f), body_font_size,
+                      COLOR_MUTED);
     const char *help = "RMB drag: knife   Ctrl+Wheel: node zoom   Ctrl+/-/0: UI scale   Del: remove";
     float help_width = MeasureTextEx(fonts.body, help, body_font_size, 0).x;
-    float help_x = GetScreenWidth() - help_width - 12 * scale;
+    float help_x = GetScreenWidth() - help_width - UiSize(graph, 12.0f);
     float status_width = MeasureTextEx(fonts.body, graph->status, body_font_size, 0).x;
-    if (help_x > 25 * scale + status_width + 20 * scale) {
-        DrawInterfaceText(fonts.body, help, help_x, y + 6 * scale, body_font_size, COLOR_MUTED);
+    if (help_x > UiSize(graph, 25.0f) + status_width + UiSize(graph, 20.0f)) {
+        DrawInterfaceText(fonts.body, help, help_x, y + UiSize(graph, 6.0f), body_font_size, COLOR_MUTED);
     }
 }

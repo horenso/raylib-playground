@@ -19,7 +19,7 @@ int main(int argc, char **argv) {
     SetTargetFPS(60);
 
     LoadInterfaceFonts();
-    SetGuiScale(1.0f);
+    SetGuiScale(UI_BASE_PIXEL_SIZE);
     GuiSetStyle(DEFAULT, BACKGROUND_COLOR, 0x191D25FF);
     GuiSetStyle(DEFAULT, BASE_COLOR_NORMAL, 0x303746FF);
     GuiSetStyle(DEFAULT, BASE_COLOR_FOCUSED, 0x3B465AFF);
@@ -51,7 +51,7 @@ int main(int argc, char **argv) {
 
     while (!WindowShouldClose()) {
         UpdateCanvas(&graph);
-        UpdateInterfaceFontScale(ApplicationScale(&graph), CanvasZoom(&graph));
+        UpdateInterfaceFontScale(UiUnit(&graph), CanvasUnit(&graph));
         if (graph.interaction_mode == INTERACTION_IDLE) {
             GuiUnlock();
         } else {
@@ -69,15 +69,15 @@ int main(int argc, char **argv) {
                 bool knife_hit = graph.knife_active &&
                                  LinkIntersectsKnife(&graph, graph.links[i], graph.knife_start, GetMousePosition());
                 Color color = knife_hit ? (Color){255, 76, 92, 255} : PortStateColor(&graph, from);
-                float thickness = (knife_hit ? 4.0f : 3.0f) * ApplicationScale(&graph);
-                DrawConnection(PortScreenPosition(&graph, from), PortScreenPosition(&graph, to), color, thickness);
+                DrawConnection(&graph, PortScreenPosition(&graph, from), PortScreenPosition(&graph, to), color,
+                               knife_hit ? 4.0f : 3.0f);
             }
         }
         if (graph.active_port_id >= 0) {
             Port *port = FindPort(&graph, graph.active_port_id);
             if (port) {
-                DrawConnection(PortScreenPosition(&graph, port), GetMousePosition(), PortStateColor(&graph, port),
-                               3.0f * ApplicationScale(&graph));
+                DrawConnection(&graph, PortScreenPosition(&graph, port), GetMousePosition(),
+                               PortStateColor(&graph, port), 3.0f);
             }
         }
 
@@ -85,7 +85,7 @@ int main(int argc, char **argv) {
             DrawNode(&graph, &graph.nodes[i]);
         }
         if (graph.knife_active) {
-            DrawKnife(graph.knife_start, GetMousePosition(), ApplicationScale(&graph));
+            DrawKnife(&graph, graph.knife_start, GetMousePosition());
         }
 
         // Draw pinned inspector or hover preview

@@ -3,8 +3,8 @@
 #include "types.h"
 
 void DrawCanvasGrid(GraphContext *graph);
-void DrawConnection(Vector2 from, Vector2 to, Color color, float thickness);
-void DrawKnife(Vector2 start, Vector2 end, float scale);
+void DrawConnection(GraphContext *graph, Vector2 from, Vector2 to, Color color, float thickness_units);
+void DrawKnife(GraphContext *graph, Vector2 start, Vector2 end);
 void DrawNode(GraphContext *graph, Node *node);
 void DrawNodeShell(GraphContext *graph, Node *node);
 void DrawNodePorts(GraphContext *graph, Node *node);

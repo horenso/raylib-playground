@@ -302,15 +302,14 @@ Vector2 PortScreenPosition(GraphContext *graph, Port *port) {
     Node *node = FindNode(graph, port->node_id);
     if (node) {
         Rectangle b = NodeScreenBounds(graph, node);
-        float zoom = CanvasZoom(graph);
         int count = port->direction == PORT_DIR_INPUT ? node->input_count : node->output_count;
         int *ids = port->direction == PORT_DIR_INPUT ? node->input_port_ids : node->output_port_ids;
         int index = 0;
         while (index < count && ids[index] != port->id) {
             index++;
         }
-        float connector_top = b.y + b.height - NodeConnectorSectionHeight(node) * zoom;
-        float y = connector_top + (15.0f + index * NODE_CONNECTOR_ROW_HEIGHT) * zoom;
+        float connector_top = b.y + b.height - CanvasSize(graph, NodeConnectorSectionHeight(node));
+        float y = connector_top + CanvasSize(graph, 15.0f + index * NODE_CONNECTOR_ROW_HEIGHT);
         float x = port->direction == PORT_DIR_INPUT ? b.x : b.x + b.width;
         return (Vector2){x, y};
     }
@@ -318,9 +317,13 @@ Vector2 PortScreenPosition(GraphContext *graph, Port *port) {
 }
 
 Rectangle NodeScreenBounds(GraphContext *graph, Node *node) {
-    float zoom = CanvasZoom(graph);
     Vector2 top_left = GetWorldToScreen2D((Vector2){node->bounds.x, node->bounds.y}, CanvasCamera(graph));
-    return (Rectangle){top_left.x, top_left.y, node->bounds.width * zoom, node->bounds.height * zoom};
+    return (Rectangle){
+        top_left.x,
+        top_left.y,
+        CanvasSize(graph, node->bounds.width),
+        CanvasSize(graph, node->bounds.height),
+    };
 }
 
 int PortAtMouse(GraphContext *graph, Vector2 mouse, PortDirection direction) {
@@ -331,7 +334,7 @@ int PortAtMouse(GraphContext *graph, Vector2 mouse, PortDirection direction) {
         for (int port_index = 0; port_index < count; port_index++) {
             Port *port = FindPort(graph, port_ids[port_index]);
             if (port && CheckCollisionPointCircle(mouse, PortScreenPosition(graph, port),
-                                                  (PORT_RADIUS + 5.0f) * CanvasZoom(graph))) {
+                                                  CanvasSize(graph, PORT_RADIUS + 5.0f))) {
                 return port->id;
             }
         }
@@ -351,8 +354,8 @@ int NodeAtMouse(GraphContext *graph, Vector2 mouse) {
     return -1;
 }
 
-static Vector2 CubicBezierPoint(Vector2 from, Vector2 to, float amount) {
-    float tangent = Clamp(fabsf(to.x - from.x) * 0.5f, 55, 180);
+static Vector2 CubicBezierPoint(GraphContext *graph, Vector2 from, Vector2 to, float amount) {
+    float tangent = Clamp(fabsf(to.x - from.x) * 0.5f, UiSize(graph, 55.0f), UiSize(graph, 180.0f));
     Vector2 control_a = {from.x + tangent, from.y};
     Vector2 control_b = {to.x - tangent, to.y};
     float inverse = 1.0f - amount;
@@ -380,7 +383,7 @@ static bool SegmentsIntersect(Vector2 a, Vector2 b, Vector2 c, Vector2 d) {
 }
 
 bool NodeIntersectsKnife(GraphContext *graph, Node *node, Vector2 start, Vector2 end) {
-    if (!node || Vector2Distance(start, end) < 4.0f) {
+    if (!node || Vector2Distance(start, end) < UiSize(graph, 4.0f)) {
         return false;
     }
     Rectangle bounds = NodeScreenBounds(graph, node);
@@ -410,7 +413,7 @@ bool LinkIntersectsKnife(GraphContext *graph, Link link, Vector2 start, Vector2 
     Vector2 previous = from;
     const int segments = 32;
     for (int i = 1; i <= segments; i++) {
-        Vector2 current = CubicBezierPoint(from, to, (float)i / (float)segments);
+        Vector2 current = CubicBezierPoint(graph, from, to, (float)i / (float)segments);
         if (SegmentsIntersect(start, end, previous, current)) {
             return true;
         }
@@ -420,7 +423,7 @@ bool LinkIntersectsKnife(GraphContext *graph, Link link, Vector2 start, Vector2 
 }
 
 int CutLinks(GraphContext *graph, Vector2 start, Vector2 end) {
-    if (Vector2Distance(start, end) < 4.0f) {
+    if (Vector2Distance(start, end) < UiSize(graph, 4.0f)) {
         return 0;
     }
     int removed = 0;
@@ -434,7 +437,7 @@ int CutLinks(GraphContext *graph, Vector2 start, Vector2 end) {
 }
 
 int CutNodes(GraphContext *graph, Vector2 start, Vector2 end) {
-    if (Vector2Distance(start, end) < 4.0f) {
+    if (Vector2Distance(start, end) < UiSize(graph, 4.0f)) {
         return 0;
     }
     int removed = 0;

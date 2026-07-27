@@ -2,6 +2,10 @@
 
 #include "raylib.h"
 
+// Layout dimensions are expressed in logical UI units. One unit occupies
+// UI_BASE_PIXEL_SIZE pixels at 100% application scale.
+#define UI_BASE_PIXEL_SIZE 1.0f
+
 #define TOOLBAR_HEIGHT 52.0f
 #define STATUS_HEIGHT 28.0f
 #define NODE_HEADER_HEIGHT 42.0f

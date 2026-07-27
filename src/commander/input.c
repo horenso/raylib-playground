@@ -9,16 +9,15 @@
 #include <string.h>
 
 static bool MouseOverNodeTextBox(GraphContext *graph, Vector2 mouse) {
-    float zoom = CanvasZoom(graph);
     for (int i = graph->node_count - 1; i >= 0; i--) {
         Node *node = &graph->nodes[i];
         Rectangle bounds = NodeScreenBounds(graph, node);
         float text_box_y = NODE_HEADER_HEIGHT + 16.0f;
         Rectangle text_box = {
-            bounds.x + 14 * zoom,
-            bounds.y + text_box_y * zoom,
-            bounds.width - 28 * zoom,
-            30 * zoom,
+            bounds.x + CanvasSize(graph, 14.0f),
+            bounds.y + CanvasSize(graph, text_box_y),
+            bounds.width - CanvasSize(graph, 28.0f),
+            CanvasSize(graph, 30.0f),
         };
         if (CheckCollisionPointRec(mouse, text_box)) {
             return true;
@@ -31,8 +30,12 @@ static bool MouseOverDialogTextBox(GraphContext *graph, Vector2 mouse) {
     if (!graph->open_dialog_open) {
         return false;
     }
-    float scale = ApplicationScale(graph);
-    Rectangle text_box = {100 * scale, ToolbarHeight(graph) + 8 * scale, 220 * scale, 28 * scale};
+    Rectangle text_box = {
+        UiSize(graph, 100.0f),
+        ToolbarHeight(graph) + UiSize(graph, 8.0f),
+        UiSize(graph, 220.0f),
+        UiSize(graph, 28.0f),
+    };
     return CheckCollisionPointRec(mouse, text_box);
 }
 
@@ -107,7 +110,7 @@ void UpdateCanvas(GraphContext *graph) {
 
     if (in_canvas && graph->interaction_mode == INTERACTION_PANNING) {
         Vector2 delta = GetMouseDelta();
-        graph->camera.target = Vector2Subtract(graph->camera.target, Vector2Scale(delta, 1.0f / CanvasZoom(graph)));
+        graph->camera.target = Vector2Subtract(graph->camera.target, Vector2Scale(delta, 1.0f / CanvasUnit(graph)));
     }
 
     float wheel = GetMouseWheelMove();
@@ -150,7 +153,7 @@ void UpdateCanvas(GraphContext *graph) {
             graph->inspected_port_id = -1;
             Rectangle b = NodeScreenBounds(graph, node);
             bool over_control = MouseOverNodeControl(graph, node, mouse);
-            if (!over_control && mouse.y <= b.y + NODE_HEADER_HEIGHT * CanvasZoom(graph)) {
+            if (!over_control && mouse.y <= b.y + CanvasSize(graph, NODE_HEADER_HEIGHT)) {
                 Vector2 world_mouse = GetScreenToWorld2D(mouse, CanvasCamera(graph));
                 graph->dragging_node_id = node_id;
                 graph->drag_offset = Vector2Subtract(world_mouse, (Vector2){node->bounds.x, node->bounds.y});

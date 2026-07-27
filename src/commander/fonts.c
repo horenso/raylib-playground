@@ -193,7 +193,7 @@ void LoadInterfaceFonts(void) {
         fonts.custom_loaded = true;
     }
 
-    UpdateInterfaceFontScale(1.0f, 1.0f);
+    UpdateInterfaceFontScale(UI_BASE_PIXEL_SIZE, UI_BASE_PIXEL_SIZE);
     GuiSetFont(fonts.gui);
 }
 

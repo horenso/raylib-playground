@@ -112,15 +112,23 @@ static inline float ApplicationScale(const GraphContext *graph) {
     return graph->application_scale > 0.0f ? graph->application_scale : 1.0f;
 }
 
-static inline float ToolbarHeight(const GraphContext *graph) { return TOOLBAR_HEIGHT * ApplicationScale(graph); }
+// Convert logical UI units to screen pixels. Canvas units additionally follow
+// the user-controlled node zoom.
+static inline float UiUnit(const GraphContext *graph) { return UI_BASE_PIXEL_SIZE * ApplicationScale(graph); }
 
-static inline float StatusHeight(const GraphContext *graph) { return STATUS_HEIGHT * ApplicationScale(graph); }
+static inline float UiSize(const GraphContext *graph, float units) { return units * UiUnit(graph); }
 
-static inline float CanvasZoom(const GraphContext *graph) { return graph->camera.zoom * ApplicationScale(graph); }
+static inline float CanvasUnit(const GraphContext *graph) { return graph->camera.zoom * UiUnit(graph); }
+
+static inline float CanvasSize(const GraphContext *graph, float units) { return units * CanvasUnit(graph); }
+
+static inline float ToolbarHeight(const GraphContext *graph) { return UiSize(graph, TOOLBAR_HEIGHT); }
+
+static inline float StatusHeight(const GraphContext *graph) { return UiSize(graph, STATUS_HEIGHT); }
 
 static inline Camera2D CanvasCamera(const GraphContext *graph) {
     Camera2D camera = graph->camera;
     camera.offset.y = ToolbarHeight(graph);
-    camera.zoom = CanvasZoom(graph);
+    camera.zoom = CanvasUnit(graph);
     return camera;
 }
