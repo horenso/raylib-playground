@@ -27,6 +27,14 @@ typedef enum {
     NODE_HTTP_REQUEST,
 } NodeType;
 
+typedef enum {
+    INTERACTION_IDLE,
+    INTERACTION_PANNING,
+    INTERACTION_KNIFE,
+    INTERACTION_DRAGGING_NODE,
+    INTERACTION_LINKING,
+} InteractionMode;
+
 typedef struct {
     int id;
     int node_id;
@@ -53,6 +61,8 @@ typedef struct {
     int output_port_ids[4];
     int output_count;
     bool is_dirty;
+    bool evaluation_failed;
+    bool has_evaluated;
     bool text_editing;
     bool collapsed;
     char parameter[128];
@@ -88,6 +98,7 @@ typedef struct {
     int inspect_scroll;
     int inspect_active;
     float application_scale;
+    InteractionMode interaction_mode;
 } GraphContext;
 
 static inline float ApplicationScale(const GraphContext *graph) {

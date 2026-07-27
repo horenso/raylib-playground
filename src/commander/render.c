@@ -54,6 +54,27 @@ void DrawKnife(Vector2 start, Vector2 end, float scale) {
     DrawCircleV(end, 4 * scale, blade);
 }
 
+static Rectangle NodeRunButtonBounds(GraphContext *graph, Node *node) {
+    Rectangle bounds = NodeScreenBounds(graph, node);
+    float zoom = CanvasZoom(graph);
+    float title_font_size = ScaledFontSize(TITLE_TEXT_SIZE, zoom);
+    float title_width = MeasureTextEx(fonts.title, node->title, title_font_size, 0).x;
+    float button_size = 18.0f * zoom;
+    float gap = 6.0f * zoom;
+    float group_width = title_width + gap + button_size;
+    float title_x = bounds.x + (bounds.width - group_width) * 0.5f;
+    return (Rectangle){
+        title_x + title_width + gap,
+        bounds.y + (NODE_HEADER_HEIGHT * zoom - button_size) * 0.5f,
+        button_size,
+        button_size,
+    };
+}
+
+static bool NodeOwnsMouse(GraphContext *graph, Node *node) {
+    return graph->interaction_mode == INTERACTION_IDLE && NodeAtMouse(graph, GetMousePosition()) == node->id;
+}
+
 void DrawNodeShell(GraphContext *graph, Node *node) {
     Rectangle bounds = NodeScreenBounds(graph, node);
     float zoom = CanvasZoom(graph);
@@ -64,8 +85,13 @@ void DrawNodeShell(GraphContext *graph, Node *node) {
     Rectangle header = {bounds.x, bounds.y, bounds.width, NODE_HEADER_HEIGHT * zoom};
     DrawRectangleRec(header, COLOR_NODE_HEADER);
 
-    float border_w = graph->selected_node_id == node->id ? 2.0f : 1.0f;
-    Color border_color = graph->selected_node_id == node->id ? COLOR_NODE_SELECTED : (Color){66, 74, 91, 255};
+    bool knife_hit = graph->knife_active && NodeIntersectsKnife(graph, node, graph->knife_start, GetMousePosition());
+    float border_w = knife_hit || graph->selected_node_id == node->id ? 2.0f : 1.0f;
+    Color border_color = knife_hit                             ? (Color){255, 76, 92, 255}
+                         : graph->selected_node_id == node->id ? COLOR_NODE_SELECTED
+                         : node->evaluation_failed             ? (Color){235, 87, 87, 255}
+                         : node->is_dirty                      ? COLOR_STRING
+                                                               : (Color){66, 74, 91, 255};
     DrawRectangleLinesEx(bounds, border_w, border_color);
 
     // Header/body separator line
@@ -83,7 +109,8 @@ void DrawNodeShell(GraphContext *graph, Node *node) {
         tab_w,
         tab_h,
     };
-    bool chevron_hovered = CheckCollisionPointRec(GetMousePosition(), chevron_btn);
+    bool chevron_hovered =
+        graph->interaction_mode == INTERACTION_IDLE && CheckCollisionPointRec(GetMousePosition(), chevron_btn);
     DrawRectangleRec(chevron_btn, chevron_hovered ? (Color){75, 84, 101, 255} : (Color){55, 62, 78, 255});
 
     // draw chevron arrow inside the tab
@@ -150,11 +177,28 @@ void DrawNodeShell(GraphContext *graph, Node *node) {
         out_right -= chip_gap;
     }
 
-    // title — centered in the full header width
+    // Title and branch-run button are centered as a group.
     float title_font_size = ScaledFontSize(TITLE_TEXT_SIZE, zoom);
     float title_w = MeasureTextEx(fonts.title, node->title, title_font_size, 0).x;
-    DrawInterfaceText(fonts.title, node->title, bounds.x + (bounds.width - title_w) * 0.5f, bounds.y + 7 * zoom,
-                      title_font_size, COLOR_TEXT);
+    Rectangle run_btn = NodeRunButtonBounds(graph, node);
+    float title_x = run_btn.x - 6.0f * zoom - title_w;
+    DrawInterfaceText(fonts.title, node->title, title_x, bounds.y + 7 * zoom, title_font_size, COLOR_TEXT);
+
+    bool run_hovered = NodeOwnsMouse(graph, node) && CheckCollisionPointRec(GetMousePosition(), run_btn);
+    Color run_color = node->evaluation_failed ? (Color){235, 87, 87, 255}
+                      : node->is_dirty        ? COLOR_STRING
+                                              : COLOR_STRING_LIST;
+    Color run_background = run_hovered ? (Color){75, 84, 101, 255} : (Color){38, 44, 56, 255};
+    DrawRectangleRec(run_btn, run_background);
+    DrawRectangleLinesEx(run_btn, zoom, run_color);
+    float play_pad = 5.0f * zoom;
+    DrawTriangle((Vector2){run_btn.x + play_pad, run_btn.y + play_pad},
+                 (Vector2){run_btn.x + play_pad, run_btn.y + run_btn.height - play_pad},
+                 (Vector2){run_btn.x + run_btn.width - play_pad, run_btn.y + run_btn.height * 0.5f}, run_color);
+
+    if (run_hovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        RunNode(graph, node->id);
+    }
 }
 
 void DrawNodePorts(GraphContext *graph, Node *node) {
@@ -190,13 +234,21 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
         SetNodeGuiScale(zoom);
         char before[128];
         TextCopy(before, node->parameter);
+        bool gui_was_locked = GuiIsLocked();
+        bool covered_click =
+            IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && NodeAtMouse(graph, GetMousePosition()) != node->id;
+        if (covered_click && !gui_was_locked) {
+            GuiLock();
+        }
         if (GuiTextBox(text_box, node->parameter, sizeof(node->parameter), node->text_editing)) {
             node->text_editing = !node->text_editing;
         }
+        if (covered_click && !gui_was_locked) {
+            GuiUnlock();
+        }
         if (strcmp(before, node->parameter) != 0) {
-            node->is_dirty = true;
-            MarkDownstreamDirty(graph, node->id);
-            snprintf(graph->status, sizeof(graph->status), "Parameters changed - run graph to refresh");
+            MarkNodeDirty(graph, node->id);
+            snprintf(graph->status, sizeof(graph->status), "%s and downstream nodes are dirty", node->title);
         }
 
         if (node->type == NODE_STRING_FILTER) {
@@ -233,11 +285,11 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
                 DrawInterfaceText(fonts.node_body, buttons[b].label, btn.x + (btn.width - text_w) * 0.5f,
                                   btn.y + (btn.height - body_font_size) * 0.5f, body_font_size, btn_text);
 
-                if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), btn)) {
+                if (NodeOwnsMouse(graph, node) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+                    CheckCollisionPointRec(GetMousePosition(), btn)) {
                     *buttons[b].flag = !(*buttons[b].flag);
-                    node->is_dirty = true;
-                    MarkDownstreamDirty(graph, node->id);
-                    snprintf(graph->status, sizeof(graph->status), "Filter options changed - run graph to refresh");
+                    MarkNodeDirty(graph, node->id);
+                    snprintf(graph->status, sizeof(graph->status), "Filter and downstream nodes are dirty");
                 }
             }
 
@@ -255,27 +307,40 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
             DrawInterfaceText(fonts.node_body, mode_label, mode_btn.x + (mode_btn.width - mode_text_w) * 0.5f,
                               mode_btn.y + (mode_btn.height - body_font_size) * 0.5f, body_font_size, btn_text);
 
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), mode_btn)) {
+            if (NodeOwnsMouse(graph, node) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+                CheckCollisionPointRec(GetMousePosition(), mode_btn)) {
                 node->filter_exclude = !node->filter_exclude;
-                node->is_dirty = true;
-                MarkDownstreamDirty(graph, node->id);
-                snprintf(graph->status, sizeof(graph->status), "Filter mode changed to %s - run graph to refresh",
+                MarkNodeDirty(graph, node->id);
+                snprintf(graph->status, sizeof(graph->status), "Filter mode changed to %s - branch is dirty",
                          node->filter_exclude ? "exclude" : "include");
             }
         }
 
+        const char *state_label = node->evaluation_failed                 ? "FAILED"
+                                  : node->is_dirty && node->has_evaluated ? "DIRTY | cached"
+                                  : node->is_dirty                        ? "NOT RUN"
+                                                                          : "CURRENT";
+        Color state_color = node->evaluation_failed ? (Color){235, 87, 87, 255}
+                            : node->is_dirty        ? COLOR_STRING
+                                                    : COLOR_STRING_LIST;
         if (node->type == NODE_EXEC) {
             Port *errors = NodeOutputPort(graph, node, 1);
-            DrawInterfaceText(
-                fonts.node_body,
-                TextFormat("%d stdout  |  %d stderr", output ? output->item_count : 0, errors ? errors->item_count : 0),
-                bounds.x + 14 * zoom, bounds.y + count_y * zoom, body_font_size, COLOR_MUTED);
+            DrawInterfaceText(fonts.node_body,
+                              TextFormat("%s | %d stdout | %d stderr", state_label, output ? output->item_count : 0,
+                                         errors ? errors->item_count : 0),
+                              bounds.x + 14 * zoom, bounds.y + count_y * zoom, body_font_size, state_color);
         } else {
             int count = output ? output->item_count : 0;
-            DrawInterfaceText(fonts.node_body, TextFormat("%d item%s", count, count == 1 ? "" : "s"),
-                              bounds.x + 14 * zoom, bounds.y + count_y * zoom, body_font_size, COLOR_MUTED);
+            DrawInterfaceText(fonts.node_body, TextFormat("%s | %d item%s", state_label, count, count == 1 ? "" : "s"),
+                              bounds.x + 14 * zoom, bounds.y + count_y * zoom, body_font_size, state_color);
         }
     }
+}
+
+void DrawNode(GraphContext *graph, Node *node) {
+    DrawNodeShell(graph, node);
+    DrawNodeContent(graph, node);
+    DrawNodePorts(graph, node);
 }
 
 bool MouseOverCollapseButton(GraphContext *graph, Node *node, Vector2 mouse) {
@@ -296,7 +361,13 @@ bool MouseOverCollapseButton(GraphContext *graph, Node *node, Vector2 mouse) {
 }
 
 bool MouseOverNodeControl(GraphContext *graph, Node *node, Vector2 mouse) {
-    if (!node || node->collapsed) {
+    if (!node) {
+        return false;
+    }
+    if (CheckCollisionPointRec(mouse, NodeRunButtonBounds(graph, node))) {
+        return true;
+    }
+    if (node->collapsed) {
         return false;
     }
     Rectangle b = NodeScreenBounds(graph, node);
@@ -382,7 +453,7 @@ void DrawToolbar(GraphContext *graph) {
         graph->add_menu_open = !graph->add_menu_open;
         graph->open_dialog_open = false;
     }
-    if (GuiButton((Rectangle){154 * scale, 10 * scale, 100 * scale, 32 * scale}, "#131# Run")) {
+    if (GuiButton((Rectangle){154 * scale, 10 * scale, 100 * scale, 32 * scale}, "#131# Run all")) {
         RunGraph(graph);
     }
     if (GuiButton((Rectangle){264 * scale, 10 * scale, 100 * scale, 32 * scale}, "#01# Open")) {

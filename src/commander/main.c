@@ -52,6 +52,11 @@ int main(int argc, char **argv) {
     while (!WindowShouldClose()) {
         UpdateCanvas(&graph);
         UpdateInterfaceFontScale(ApplicationScale(&graph), CanvasZoom(&graph));
+        if (graph.interaction_mode == INTERACTION_IDLE) {
+            GuiUnlock();
+        } else {
+            GuiLock();
+        }
 
         BeginDrawing();
         ClearBackground(COLOR_CANVAS);
@@ -61,8 +66,11 @@ int main(int argc, char **argv) {
             Port *from = FindPort(&graph, graph.links[i].from_port_id);
             Port *to = FindPort(&graph, graph.links[i].to_port_id);
             if (from && to) {
-                DrawConnection(PortScreenPosition(&graph, from), PortScreenPosition(&graph, to),
-                               PortColor(from->data_type), 3.0f * ApplicationScale(&graph));
+                bool knife_hit = graph.knife_active &&
+                                 LinkIntersectsKnife(&graph, graph.links[i], graph.knife_start, GetMousePosition());
+                Color color = knife_hit ? (Color){255, 76, 92, 255} : PortColor(from->data_type);
+                float thickness = (knife_hit ? 4.0f : 3.0f) * ApplicationScale(&graph);
+                DrawConnection(PortScreenPosition(&graph, from), PortScreenPosition(&graph, to), color, thickness);
             }
         }
         if (graph.active_port_id >= 0) {
@@ -74,11 +82,7 @@ int main(int argc, char **argv) {
         }
 
         for (int i = 0; i < graph.node_count; i++) {
-            DrawNodeShell(&graph, &graph.nodes[i]);
-        }
-        for (int i = 0; i < graph.node_count; i++) {
-            DrawNodeContent(&graph, &graph.nodes[i]);
-            DrawNodePorts(&graph, &graph.nodes[i]);
+            DrawNode(&graph, &graph.nodes[i]);
         }
         if (graph.knife_active) {
             DrawKnife(graph.knife_start, GetMousePosition(), ApplicationScale(&graph));
@@ -88,7 +92,7 @@ int main(int argc, char **argv) {
         int hovered_output = PortAtMouse(&graph, GetMousePosition(), PORT_DIR_OUTPUT);
         if (graph.inspected_port_id >= 0) {
             DrawPortInspector(&graph, graph.inspected_port_id, true);
-        } else if (hovered_output >= 0 && graph.active_port_id < 0) {
+        } else if (hovered_output >= 0 && graph.interaction_mode == INTERACTION_IDLE) {
             DrawPortInspector(&graph, hovered_output, false);
         }
 
@@ -96,6 +100,7 @@ int main(int argc, char **argv) {
         DrawStatusBar(&graph);
 
         EndDrawing();
+        GuiUnlock();
     }
 
     UnloadInterfaceFonts();

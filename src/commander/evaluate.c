@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 typedef struct {
@@ -58,16 +59,35 @@ static void ReadLines(FILE *stream, Port *port) {
     }
 }
 
-void EvaluateNode(GraphContext *graph, Node *node, int depth) {
-    if (!node || !node->is_dirty || depth > MAX_NODES) {
-        return;
+bool EvaluateNode(GraphContext *graph, Node *node, int depth) {
+    if (!node) {
+        return false;
+    }
+    if (!node->is_dirty) {
+        return !node->evaluation_failed;
+    }
+    if (node->evaluation_failed) {
+        return false;
+    }
+    if (depth > MAX_NODES) {
+        snprintf(graph->status, sizeof(graph->status), "Cannot evaluate %s: dependency cycle", node->title);
+        graph->evaluation_error = true;
+        node->evaluation_failed = true;
+        return false;
     }
 
     Port *source_port = InputSourcePort(graph, node, 0);
     Node *source = source_port ? FindNode(graph, source_port->node_id) : NULL;
-    if (source) {
-        EvaluateNode(graph, source, depth + 1);
+    if (source && !EvaluateNode(graph, source, depth + 1)) {
+        snprintf(graph->status, sizeof(graph->status), "Cannot update %s: upstream %s failed", node->title,
+                 source->title);
+        graph->evaluation_error = true;
+        node->evaluation_failed = true;
+        return false;
     }
+
+    bool success = true;
+    node->evaluation_failed = false;
     for (int i = 0; i < node->output_count; i++) {
         Port *port = NodeOutputPort(graph, node, i);
         if (port) {
@@ -97,6 +117,7 @@ void EvaluateNode(GraphContext *graph, Node *node, int depth) {
                 regerror(compile_result, &expression, error, sizeof(error));
                 snprintf(graph->status, sizeof(graph->status), "Regex error: %s", error);
                 graph->evaluation_error = true;
+                success = false;
             } else {
                 for (int i = 0; output && i < source_port->item_count && output->item_count < MAX_ITEMS; i++) {
                     bool matched = regexec(&expression, source_port->items[i], 0, NULL, 0) == 0;
@@ -154,6 +175,7 @@ void EvaluateNode(GraphContext *graph, Node *node, int depth) {
         if (!curl) {
             snprintf(graph->status, sizeof(graph->status), "HTTP error: curl_easy_init failed");
             graph->evaluation_error = true;
+            success = false;
         } else {
             curl_easy_setopt(curl, CURLOPT_URL, node->parameter);
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
@@ -164,6 +186,7 @@ void EvaluateNode(GraphContext *graph, Node *node, int depth) {
             if (res != CURLE_OK) {
                 snprintf(graph->status, sizeof(graph->status), "HTTP error: %s", curl_easy_strerror(res));
                 graph->evaluation_error = true;
+                success = false;
             } else {
                 char *line = response.buf;
                 char *end = response.buf + response.len;
@@ -206,6 +229,7 @@ void EvaluateNode(GraphContext *graph, Node *node, int depth) {
             }
             snprintf(graph->status, sizeof(graph->status), "Exec error: failed to create temporary files");
             graph->evaluation_error = true;
+            success = false;
         } else {
             close(stderr_fd);
             setenv("ITEMS", tmppath, 1);
@@ -215,9 +239,18 @@ void EvaluateNode(GraphContext *graph, Node *node, int depth) {
             if (!proc) {
                 snprintf(graph->status, sizeof(graph->status), "Exec error: failed to run command");
                 graph->evaluation_error = true;
+                success = false;
             } else {
                 ReadLines(proc, output);
-                pclose(proc);
+                int command_status = pclose(proc);
+                if (command_status == -1 || !WIFEXITED(command_status) || WEXITSTATUS(command_status) != 0) {
+                    int exit_code =
+                        command_status != -1 && WIFEXITED(command_status) ? WEXITSTATUS(command_status) : -1;
+                    snprintf(graph->status, sizeof(graph->status), "Exec error: command exited with status %d",
+                             exit_code);
+                    graph->evaluation_error = true;
+                    success = false;
+                }
             }
 
             FILE *errors = fopen(stderr_path, "r");
@@ -227,16 +260,77 @@ void EvaluateNode(GraphContext *graph, Node *node, int depth) {
             } else {
                 snprintf(graph->status, sizeof(graph->status), "Exec error: failed to read stderr");
                 graph->evaluation_error = true;
+                success = false;
             }
             remove(stderr_path);
             remove(tmppath);
         }
     }
-    node->is_dirty = false;
+    node->evaluation_failed = !success;
+    if (success) {
+        node->is_dirty = false;
+        node->has_evaluated = true;
+    }
+    return success;
+}
+
+static int NodeIndex(GraphContext *graph, int node_id) {
+    for (int i = 0; i < graph->node_count; i++) {
+        if (graph->nodes[i].id == node_id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static bool EvaluateBranch(GraphContext *graph, int node_id, bool visited[MAX_NODES], int *updated_count) {
+    int node_index = NodeIndex(graph, node_id);
+    if (node_index < 0 || visited[node_index]) {
+        return true;
+    }
+    visited[node_index] = true;
+
+    Node *node = &graph->nodes[node_index];
+    if (!EvaluateNode(graph, node, 0)) {
+        return false;
+    }
+    (*updated_count)++;
+
+    bool success = true;
+    for (int i = 0; i < graph->link_count; i++) {
+        Port *from = FindPort(graph, graph->links[i].from_port_id);
+        Port *to = FindPort(graph, graph->links[i].to_port_id);
+        if (from && to && from->node_id == node_id) {
+            success = EvaluateBranch(graph, to->node_id, visited, updated_count) && success;
+        }
+    }
+    return success;
+}
+
+void RunNode(GraphContext *graph, int node_id) {
+    Node *node = FindNode(graph, node_id);
+    if (!node) {
+        return;
+    }
+
+    graph->evaluation_error = false;
+    MarkNodeDirty(graph, node_id);
+    bool visited[MAX_NODES] = {0};
+    int updated_count = 0;
+    bool success = EvaluateBranch(graph, node_id, visited, &updated_count);
+    if (success && !graph->evaluation_error) {
+        int downstream_count = updated_count > 0 ? updated_count - 1 : 0;
+        snprintf(graph->status, sizeof(graph->status), "Updated %s and %d downstream node%s", node->title,
+                 downstream_count, downstream_count == 1 ? "" : "s");
+    }
 }
 
 void RunGraph(GraphContext *graph) {
     graph->evaluation_error = false;
+    for (int i = 0; i < graph->node_count; i++) {
+        graph->nodes[i].is_dirty = true;
+        graph->nodes[i].evaluation_failed = false;
+    }
     for (int i = 0; i < graph->node_count; i++) {
         EvaluateNode(graph, &graph->nodes[i], 0);
     }

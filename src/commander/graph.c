@@ -122,19 +122,14 @@ bool AddLink(GraphContext *graph, int from_id, int to_id) {
         return false;
     }
     graph->links[graph->link_count++] = (Link){.from_port_id = from_id, .to_port_id = to_id};
-    Node *target = FindNode(graph, to->node_id);
-    if (target) {
-        target->is_dirty = true;
-    }
+    MarkNodeDirty(graph, to->node_id);
     return true;
 }
 
 static void DirtyLinkTarget(GraphContext *graph, Link link) {
     Port *to = FindPort(graph, link.to_port_id);
-    Node *target = to ? FindNode(graph, to->node_id) : NULL;
-    if (target && !target->is_dirty) {
-        target->is_dirty = true;
-        MarkDownstreamDirty(graph, target->id);
+    if (to) {
+        MarkNodeDirty(graph, to->node_id);
     }
 }
 
@@ -199,18 +194,34 @@ bool IsEditingText(GraphContext *graph) {
     return false;
 }
 
-void MarkDownstreamDirty(GraphContext *graph, int node_id) {
+static void MarkDirtyRecursive(GraphContext *graph, int node_id, bool visited[MAX_NODES]) {
+    int node_index = -1;
+    for (int i = 0; i < graph->node_count; i++) {
+        if (graph->nodes[i].id == node_id) {
+            node_index = i;
+            break;
+        }
+    }
+    if (node_index < 0 || visited[node_index]) {
+        return;
+    }
+    visited[node_index] = true;
+
+    graph->nodes[node_index].is_dirty = true;
+    graph->nodes[node_index].evaluation_failed = false;
+
     for (int i = 0; i < graph->link_count; i++) {
         Port *from = FindPort(graph, graph->links[i].from_port_id);
         Port *to = FindPort(graph, graph->links[i].to_port_id);
         if (from && to && from->node_id == node_id) {
-            Node *target = FindNode(graph, to->node_id);
-            if (target && !target->is_dirty) {
-                target->is_dirty = true;
-                MarkDownstreamDirty(graph, target->id);
-            }
+            MarkDirtyRecursive(graph, to->node_id, visited);
         }
     }
+}
+
+void MarkNodeDirty(GraphContext *graph, int node_id) {
+    bool visited[MAX_NODES] = {0};
+    MarkDirtyRecursive(graph, node_id, visited);
 }
 
 Port *InputSourcePort(GraphContext *graph, Node *node, int input_index) {
@@ -278,11 +289,19 @@ Rectangle NodeScreenBounds(GraphContext *graph, Node *node) {
 }
 
 int PortAtMouse(GraphContext *graph, Vector2 mouse, PortDirection direction) {
-    for (int i = graph->port_count - 1; i >= 0; i--) {
-        Port *port = &graph->ports[i];
-        if (port->direction == direction && CheckCollisionPointCircle(mouse, PortScreenPosition(graph, port),
-                                                                      (PORT_RADIUS + 5.0f) * CanvasZoom(graph))) {
-            return port->id;
+    for (int node_index = graph->node_count - 1; node_index >= 0; node_index--) {
+        Node *node = &graph->nodes[node_index];
+        int count = direction == PORT_DIR_INPUT ? node->input_count : node->output_count;
+        int *port_ids = direction == PORT_DIR_INPUT ? node->input_port_ids : node->output_port_ids;
+        for (int port_index = 0; port_index < count; port_index++) {
+            Port *port = FindPort(graph, port_ids[port_index]);
+            if (port && CheckCollisionPointCircle(mouse, PortScreenPosition(graph, port),
+                                                  (PORT_RADIUS + 5.0f) * CanvasZoom(graph))) {
+                return port->id;
+            }
+        }
+        if (CheckCollisionPointRec(mouse, NodeScreenBounds(graph, node))) {
+            return -1;
         }
     }
     return -1;
@@ -325,7 +344,26 @@ static bool SegmentsIntersect(Vector2 a, Vector2 b, Vector2 c, Vector2 d) {
     return first_amount >= 0 && first_amount <= 1 && second_amount >= 0 && second_amount <= 1;
 }
 
-static bool LinkIntersectsKnife(GraphContext *graph, Link link, Vector2 start, Vector2 end) {
+bool NodeIntersectsKnife(GraphContext *graph, Node *node, Vector2 start, Vector2 end) {
+    if (!node || Vector2Distance(start, end) < 4.0f) {
+        return false;
+    }
+    Rectangle bounds = NodeScreenBounds(graph, node);
+    if (CheckCollisionPointRec(start, bounds) || CheckCollisionPointRec(end, bounds)) {
+        return true;
+    }
+
+    Vector2 top_left = {bounds.x, bounds.y};
+    Vector2 top_right = {bounds.x + bounds.width, bounds.y};
+    Vector2 bottom_left = {bounds.x, bounds.y + bounds.height};
+    Vector2 bottom_right = {bounds.x + bounds.width, bounds.y + bounds.height};
+    return SegmentsIntersect(start, end, top_left, top_right) ||
+           SegmentsIntersect(start, end, top_right, bottom_right) ||
+           SegmentsIntersect(start, end, bottom_right, bottom_left) ||
+           SegmentsIntersect(start, end, bottom_left, top_left);
+}
+
+bool LinkIntersectsKnife(GraphContext *graph, Link link, Vector2 start, Vector2 end) {
     Port *from_port = FindPort(graph, link.from_port_id);
     Port *to_port = FindPort(graph, link.to_port_id);
     if (!from_port || !to_port) {
@@ -354,6 +392,21 @@ int CutLinks(GraphContext *graph, Vector2 start, Vector2 end) {
     for (int i = graph->link_count - 1; i >= 0; i--) {
         if (LinkIntersectsKnife(graph, graph->links[i], start, end)) {
             RemoveLinkAt(graph, i);
+            removed++;
+        }
+    }
+    return removed;
+}
+
+int CutNodes(GraphContext *graph, Vector2 start, Vector2 end) {
+    if (Vector2Distance(start, end) < 4.0f) {
+        return 0;
+    }
+    int removed = 0;
+    for (int i = graph->node_count - 1; i >= 0; i--) {
+        if (NodeIntersectsKnife(graph, &graph->nodes[i], start, end)) {
+            int node_id = graph->nodes[i].id;
+            RemoveNode(graph, node_id);
             removed++;
         }
     }
