@@ -14,7 +14,7 @@
 #define PORT_TEXT_SIZE 14
 #define GUI_TEXT_SIZE 16
 
-#define NODE_ZOOM_MIN 0.70f
+#define NODE_ZOOM_MIN 1.00f
 #define NODE_ZOOM_MAX 2.00f
 #define NODE_ZOOM_STEP 0.15f
 

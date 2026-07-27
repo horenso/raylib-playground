@@ -274,39 +274,6 @@ bool EvaluateNode(GraphContext *graph, Node *node, int depth) {
     return success;
 }
 
-static int NodeIndex(GraphContext *graph, int node_id) {
-    for (int i = 0; i < graph->node_count; i++) {
-        if (graph->nodes[i].id == node_id) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-static bool EvaluateBranch(GraphContext *graph, int node_id, bool visited[MAX_NODES], int *updated_count) {
-    int node_index = NodeIndex(graph, node_id);
-    if (node_index < 0 || visited[node_index]) {
-        return true;
-    }
-    visited[node_index] = true;
-
-    Node *node = &graph->nodes[node_index];
-    if (!EvaluateNode(graph, node, 0)) {
-        return false;
-    }
-    (*updated_count)++;
-
-    bool success = true;
-    for (int i = 0; i < graph->link_count; i++) {
-        Port *from = FindPort(graph, graph->links[i].from_port_id);
-        Port *to = FindPort(graph, graph->links[i].to_port_id);
-        if (from && to && from->node_id == node_id) {
-            success = EvaluateBranch(graph, to->node_id, visited, updated_count) && success;
-        }
-    }
-    return success;
-}
-
 void RunNode(GraphContext *graph, int node_id) {
     Node *node = FindNode(graph, node_id);
     if (!node) {
@@ -315,13 +282,9 @@ void RunNode(GraphContext *graph, int node_id) {
 
     graph->evaluation_error = false;
     MarkNodeDirty(graph, node_id);
-    bool visited[MAX_NODES] = {0};
-    int updated_count = 0;
-    bool success = EvaluateBranch(graph, node_id, visited, &updated_count);
+    bool success = EvaluateNode(graph, node, 0);
     if (success && !graph->evaluation_error) {
-        int downstream_count = updated_count > 0 ? updated_count - 1 : 0;
-        snprintf(graph->status, sizeof(graph->status), "Updated %s and %d downstream node%s", node->title,
-                 downstream_count, downstream_count == 1 ? "" : "s");
+        snprintf(graph->status, sizeof(graph->status), "Updated %s and required upstream nodes", node->title);
     }
 }
 
@@ -366,5 +329,4 @@ void SeedGraph(GraphContext *graph) {
         AddLink(graph, match->output_port_ids[0], bash->input_port_ids[0]);
         TextCopy(bash->parameter, "sort $ITEMS");
     }
-    RunGraph(graph);
 }

@@ -372,7 +372,7 @@ void DrawToolbar(GraphContext *graph) {
         graph->add_menu_open = !graph->add_menu_open;
         graph->open_dialog_open = false;
     }
-    if (GuiButton((Rectangle){154 * scale, 10 * scale, 100 * scale, 32 * scale}, "#131# Run all")) {
+    if (GuiButton((Rectangle){154 * scale, 10 * scale, 100 * scale, 32 * scale}, "#131# Run")) {
         RunGraph(graph);
     }
     if (GuiButton((Rectangle){264 * scale, 10 * scale, 100 * scale, 32 * scale}, "#01# Open")) {
@@ -408,19 +408,28 @@ void DrawToolbar(GraphContext *graph) {
     }
 
     const char *fname = graph->current_file[0] ? graph->current_file : "(unsaved)";
-    float right_text_y = 18 * scale;
-    float ui_label_width = 72 * scale;
-    float node_label_width = 92 * scale;
-    float right_labels_x = GetScreenWidth() - ui_label_width - node_label_width;
+    float scale_button_y = 10 * scale;
+    float scale_button_height = 32 * scale;
+    float scale_button_gap = 6 * scale;
+    float ui_label_width = 104 * scale;
+    float node_label_width = 128 * scale;
+    float right_labels_x = GetScreenWidth() - 12 * scale - ui_label_width - scale_button_gap - node_label_width;
     float fname_x = 492 * scale;
     float fname_width = MeasureTextEx(fonts.body, fname, body_font_size, 0).x;
     if (fname_x + fname_width + 12 * scale < right_labels_x) {
-        DrawInterfaceText(fonts.body, fname, fname_x, right_text_y, body_font_size, COLOR_MUTED);
+        DrawInterfaceText(fonts.body, fname, fname_x, 18 * scale, body_font_size, COLOR_MUTED);
     }
-    DrawInterfaceText(fonts.body, TextFormat("Node %d%%", (int)(graph->camera.zoom * 100 + 0.5f)), right_labels_x,
-                      right_text_y, body_font_size, COLOR_MUTED);
-    DrawInterfaceText(fonts.body, TextFormat("UI %d%%", (int)(scale * 100 + 0.5f)), GetScreenWidth() - ui_label_width,
-                      right_text_y, body_font_size, COLOR_MUTED);
+    if (GuiButton((Rectangle){right_labels_x, scale_button_y, node_label_width, scale_button_height},
+                  TextFormat("Node %d%%", (int)(graph->camera.zoom * 100 + 0.5f)))) {
+        graph->camera.zoom = 1.0f;
+        TextCopy(graph->status, "Node zoom reset to 100%");
+    }
+    if (GuiButton((Rectangle){right_labels_x + node_label_width + scale_button_gap, scale_button_y, ui_label_width,
+                              scale_button_height},
+                  TextFormat("UI %d%%", (int)(scale * 100 + 0.5f)))) {
+        graph->application_scale = 1.0f;
+        TextCopy(graph->status, "Application scale reset to 100%");
+    }
 
     if (graph->add_menu_open) {
         const char *labels[] = {"Files", "Filter", "Exec", "HTTP Request"};
