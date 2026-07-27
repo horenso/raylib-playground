@@ -13,5 +13,4 @@ void DrawPortInspector(GraphContext *graph, int port_id, bool pinned);
 void DrawToolbar(GraphContext *graph);
 void DrawStatusBar(GraphContext *graph);
 bool MouseOverNodeControl(GraphContext *graph, Node *node, Vector2 mouse);
-bool MouseOverCollapseButton(GraphContext *graph, Node *node, Vector2 mouse);
 bool MouseOverPortInspector(GraphContext *graph, Vector2 mouse);

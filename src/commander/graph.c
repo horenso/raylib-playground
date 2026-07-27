@@ -68,7 +68,7 @@ Node *AddNode(GraphContext *graph, NodeType type, Vector2 position) {
     memset(node, 0, sizeof(*node));
     node->id = id;
     node->type = type;
-    node->bounds = (Rectangle){position.x, position.y, 250, 148};
+    node->bounds = (Rectangle){position.x, position.y, 250, 164};
     node->is_dirty = true;
     node->list_active = -1;
 
@@ -82,7 +82,7 @@ Node *AddNode(GraphContext *graph, NodeType type, Vector2 position) {
         TextCopy(node->title, "Filter");
         TextCopy(node->parameter, "\\.c$");
         node->filter_use_regex = true;
-        node->bounds.height = 210;
+        node->bounds.height = 186;
         AddPort(graph, node, "Files", PORT_TYPE_STRING_LIST, PORT_DIR_INPUT, 55);
         AddPort(graph, node, "Matches", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 178);
         break;
@@ -90,7 +90,7 @@ Node *AddNode(GraphContext *graph, NodeType type, Vector2 position) {
         TextCopy(node->title, "Exec");
         TextCopy(node->parameter, "sort");
         node->bounds.width = 320;
-        node->bounds.height = 180;
+        node->bounds.height = 184;
         AddPort(graph, node, "Stdin", PORT_TYPE_STRING_LIST, PORT_DIR_INPUT, 55);
         AddPort(graph, node, "Stdout", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 148);
         AddPort(graph, node, "Stderr", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 148);
@@ -98,7 +98,7 @@ Node *AddNode(GraphContext *graph, NodeType type, Vector2 position) {
     case NODE_HTTP_REQUEST:
         TextCopy(node->title, "HTTP Request");
         TextCopy(node->parameter, "https://");
-        node->bounds.height = 148;
+        node->bounds.height = 164;
         AddPort(graph, node, "Lines", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 112);
         break;
     }
@@ -260,6 +260,14 @@ Vector2 PortWorldPosition(GraphContext *graph, Port *port) {
     return node ? Vector2Add((Vector2){node->bounds.x, node->bounds.y}, port->relative_pos) : (Vector2){0};
 }
 
+float NodeConnectorSectionHeight(Node *node) {
+    int rows = node->input_count > node->output_count ? node->input_count : node->output_count;
+    if (rows < 1) {
+        rows = 1;
+    }
+    return NODE_CONNECTOR_HEIGHT + (rows - 1) * NODE_CONNECTOR_ROW_HEIGHT;
+}
+
 Vector2 PortScreenPosition(GraphContext *graph, Port *port) {
     Node *node = FindNode(graph, port->node_id);
     if (node) {
@@ -271,10 +279,8 @@ Vector2 PortScreenPosition(GraphContext *graph, Port *port) {
         while (index < count && ids[index] != port->id) {
             index++;
         }
-        float header_height = NODE_HEADER_HEIGHT * zoom;
-        float margin = PORT_RADIUS * zoom;
-        float y = count <= 1 ? b.y + header_height * 0.5f
-                             : b.y + margin + (header_height - margin * 2.0f) * (float)index / (float)(count - 1);
+        float connector_top = b.y + b.height - NodeConnectorSectionHeight(node) * zoom;
+        float y = connector_top + (15.0f + index * NODE_CONNECTOR_ROW_HEIGHT) * zoom;
         float x = port->direction == PORT_DIR_INPUT ? b.x : b.x + b.width;
         return (Vector2){x, y};
     }
@@ -284,8 +290,7 @@ Vector2 PortScreenPosition(GraphContext *graph, Port *port) {
 Rectangle NodeScreenBounds(GraphContext *graph, Node *node) {
     float zoom = CanvasZoom(graph);
     Vector2 top_left = GetWorldToScreen2D((Vector2){node->bounds.x, node->bounds.y}, CanvasCamera(graph));
-    float h = node->collapsed ? NODE_HEADER_HEIGHT : node->bounds.height;
-    return (Rectangle){top_left.x, top_left.y, node->bounds.width * zoom, h * zoom};
+    return (Rectangle){top_left.x, top_left.y, node->bounds.width * zoom, node->bounds.height * zoom};
 }
 
 int PortAtMouse(GraphContext *graph, Vector2 mouse, PortDirection direction) {

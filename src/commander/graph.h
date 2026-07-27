@@ -18,6 +18,7 @@ Port *NodeOutputPort(GraphContext *graph, Node *node, int output_index);
 void BringNodeToFront(GraphContext *graph, int id);
 Vector2 PortWorldPosition(GraphContext *graph, Port *port);
 Vector2 PortScreenPosition(GraphContext *graph, Port *port);
+float NodeConnectorSectionHeight(Node *node);
 Rectangle NodeScreenBounds(GraphContext *graph, Node *node);
 int PortAtMouse(GraphContext *graph, Vector2 mouse, PortDirection direction);
 int NodeAtMouse(GraphContext *graph, Vector2 mouse);

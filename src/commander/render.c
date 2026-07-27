@@ -57,14 +57,9 @@ void DrawKnife(Vector2 start, Vector2 end, float scale) {
 static Rectangle NodeRunButtonBounds(GraphContext *graph, Node *node) {
     Rectangle bounds = NodeScreenBounds(graph, node);
     float zoom = CanvasZoom(graph);
-    float title_font_size = ScaledFontSize(TITLE_TEXT_SIZE, zoom);
-    float title_width = MeasureTextEx(fonts.title, node->title, title_font_size, 0).x;
-    float button_size = 18.0f * zoom;
-    float gap = 6.0f * zoom;
-    float group_width = title_width + gap + button_size;
-    float title_x = bounds.x + (bounds.width - group_width) * 0.5f;
+    float button_size = 22.0f * zoom;
     return (Rectangle){
-        title_x + title_width + gap,
+        bounds.x + bounds.width - 12.0f * zoom - button_size,
         bounds.y + (NODE_HEADER_HEIGHT * zoom - button_size) * 0.5f,
         button_size,
         button_size,
@@ -79,9 +74,7 @@ void DrawNodeShell(GraphContext *graph, Node *node) {
     Rectangle bounds = NodeScreenBounds(graph, node);
     float zoom = CanvasZoom(graph);
 
-    if (!node->collapsed) {
-        DrawRectangleRec(bounds, COLOR_NODE);
-    }
+    DrawRectangleRec(bounds, COLOR_NODE);
     Rectangle header = {bounds.x, bounds.y, bounds.width, NODE_HEADER_HEIGHT * zoom};
     DrawRectangleRec(header, COLOR_NODE_HEADER);
 
@@ -92,97 +85,48 @@ void DrawNodeShell(GraphContext *graph, Node *node) {
                          : node->evaluation_failed             ? (Color){235, 87, 87, 255}
                          : node->is_dirty                      ? COLOR_STRING
                                                                : (Color){66, 74, 91, 255};
+    // Header/options separator and the dedicated connector/status section.
+    DrawLineEx((Vector2){bounds.x, bounds.y + NODE_HEADER_HEIGHT * zoom},
+               (Vector2){bounds.x + bounds.width, bounds.y + NODE_HEADER_HEIGHT * zoom}, 1.0f, border_color);
+    float connector_y = bounds.y + bounds.height - NodeConnectorSectionHeight(node) * zoom;
+    DrawRectangleRec((Rectangle){bounds.x, connector_y, bounds.width, bounds.y + bounds.height - connector_y},
+                     (Color){29, 34, 44, 255});
+    DrawLineEx((Vector2){bounds.x, connector_y}, (Vector2){bounds.x + bounds.width, connector_y}, 1.0f, border_color);
     DrawRectangleLinesEx(bounds, border_w, border_color);
 
-    // Header/body separator line
-    if (!node->collapsed) {
-        DrawLineEx((Vector2){bounds.x, bounds.y + NODE_HEADER_HEIGHT * zoom},
-                   (Vector2){bounds.x + bounds.width, bounds.y + NODE_HEADER_HEIGHT * zoom}, 1.0f, border_color);
-    }
-
-    // collapse toggle tab — centered on the bottom edge of the node
-    float tab_w = 28.0f * zoom;
-    float tab_h = 10.0f * zoom;
-    Rectangle chevron_btn = {
-        bounds.x + (bounds.width - tab_w) * 0.5f,
-        bounds.y + bounds.height - tab_h * 0.5f,
-        tab_w,
-        tab_h,
-    };
-    bool chevron_hovered =
-        graph->interaction_mode == INTERACTION_IDLE && CheckCollisionPointRec(GetMousePosition(), chevron_btn);
-    DrawRectangleRec(chevron_btn, chevron_hovered ? (Color){75, 84, 101, 255} : (Color){55, 62, 78, 255});
-
-    // draw chevron arrow inside the tab
-    float cx = chevron_btn.x + chevron_btn.width * 0.5f;
-    float cy = chevron_btn.y + chevron_btn.height * 0.5f;
-    float aw = 4.0f * zoom;
-    float ah = 2.5f * zoom;
-    if (node->collapsed) {
-        // up arrow (expand)
-        DrawTriangle((Vector2){cx - aw, cy + ah * 0.5f}, (Vector2){cx + aw, cy + ah * 0.5f},
-                     (Vector2){cx, cy - ah * 0.5f}, COLOR_MUTED);
-    } else {
-        // down arrow (collapse)
-        DrawTriangle((Vector2){cx - aw, cy - ah * 0.5f}, (Vector2){cx + aw, cy - ah * 0.5f},
-                     (Vector2){cx, cy + ah * 0.5f}, COLOR_MUTED);
-    }
-
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && chevron_hovered) {
-        node->collapsed = !node->collapsed;
-    }
-
-    // port name chips inside the header
-    float chip_y = bounds.y + (NODE_HEADER_HEIGHT * zoom - 16.0f * zoom) * 0.5f;
+    // Port labels live beside their connection points in the bottom section.
     float chip_h = 16.0f * zoom;
     float chip_pad = 6.0f * zoom;
     float chip_font = ScaledFontSize(BODY_TEXT_SIZE * 0.85f, zoom);
-    float chip_gap = 4.0f * zoom;
     float edge_pad = 14.0f * zoom;
 
-    // input port chips — flush left (starting after the port dot)
-    float chip_x = bounds.x + edge_pad;
-    for (int i = 0; i < node->input_count; i++) {
-        Port *port = FindPort(graph, node->input_port_ids[i]);
-        if (!port) {
-            continue;
+    for (int direction = PORT_DIR_INPUT; direction <= PORT_DIR_OUTPUT; direction++) {
+        int count = direction == PORT_DIR_INPUT ? node->input_count : node->output_count;
+        int *ids = direction == PORT_DIR_INPUT ? node->input_port_ids : node->output_port_ids;
+        for (int i = 0; i < count; i++) {
+            Port *port = FindPort(graph, ids[i]);
+            if (!port) {
+                continue;
+            }
+            Color port_color = PortColor(port->data_type);
+            float label_w = MeasureTextEx(fonts.node_small, port->name, chip_font, 0).x;
+            float chip_w = label_w + chip_pad * 2;
+            Vector2 port_pos = PortScreenPosition(graph, port);
+            float chip_x =
+                direction == PORT_DIR_INPUT ? bounds.x + edge_pad : bounds.x + bounds.width - edge_pad - chip_w;
+            Rectangle chip = {chip_x, port_pos.y - chip_h * 0.5f, chip_w, chip_h};
+            DrawRectangleRec(chip, (Color){port_color.r, port_color.g, port_color.b, 40});
+            DrawRectangleLinesEx(chip, 1, (Color){port_color.r, port_color.g, port_color.b, 120});
+            DrawInterfaceText(fonts.node_small, port->name, chip.x + chip_pad, chip.y + (chip_h - chip_font) * 0.5f,
+                              chip_font, port_color);
         }
-        Color port_color = PortColor(port->data_type);
-        float label_w = MeasureTextEx(fonts.node_small, port->name, chip_font, 0).x;
-        float chip_w = label_w + chip_pad * 2;
-        Rectangle chip = {chip_x, chip_y, chip_w, chip_h};
-        DrawRectangleRec(chip, (Color){port_color.r, port_color.g, port_color.b, 40});
-        DrawRectangleLinesEx(chip, 1, (Color){port_color.r, port_color.g, port_color.b, 120});
-        DrawInterfaceText(fonts.node_small, port->name, chip.x + chip_pad, chip.y + (chip_h - chip_font) * 0.5f,
-                          chip_font, port_color);
-        chip_x += chip_w + chip_gap;
     }
 
-    // output port chips — flush right
-    float out_right = bounds.x + bounds.width - edge_pad;
-    for (int i = node->output_count - 1; i >= 0; i--) {
-        Port *port = FindPort(graph, node->output_port_ids[i]);
-        if (!port) {
-            continue;
-        }
-        Color port_color = PortColor(port->data_type);
-        float label_w = MeasureTextEx(fonts.node_small, port->name, chip_font, 0).x;
-        float chip_w = label_w + chip_pad * 2;
-        out_right -= chip_w;
-        Rectangle chip = {out_right, chip_y, chip_w, chip_h};
-        DrawRectangleRec(chip, (Color){port_color.r, port_color.g, port_color.b, 40});
-        DrawRectangleLinesEx(chip, 1, (Color){port_color.r, port_color.g, port_color.b, 120});
-        DrawInterfaceText(fonts.node_small, port->name, chip.x + chip_pad, chip.y + (chip_h - chip_font) * 0.5f,
-                          chip_font, port_color);
-        out_right -= chip_gap;
-    }
-
-    // Title and branch-run button are centered as a group.
+    // The top section is intentionally quiet: title on the left, branch run on the right.
     float title_font_size = ScaledFontSize(TITLE_TEXT_SIZE, zoom);
-    float title_w = MeasureTextEx(fonts.title, node->title, title_font_size, 0).x;
     Rectangle run_btn = NodeRunButtonBounds(graph, node);
-    float title_x = run_btn.x - 6.0f * zoom - title_w;
-    DrawInterfaceText(fonts.title, node->title, title_x, bounds.y + 7 * zoom, title_font_size, COLOR_TEXT);
+    DrawInterfaceText(fonts.title, node->title, bounds.x + 14.0f * zoom,
+                      bounds.y + (NODE_HEADER_HEIGHT * zoom - title_font_size) * 0.5f, title_font_size, COLOR_TEXT);
 
     bool run_hovered = NodeOwnsMouse(graph, node) && CheckCollisionPointRec(GetMousePosition(), run_btn);
     Color run_color = node->evaluation_failed ? (Color){235, 87, 87, 255}
@@ -191,7 +135,7 @@ void DrawNodeShell(GraphContext *graph, Node *node) {
     Color run_background = run_hovered ? (Color){75, 84, 101, 255} : (Color){38, 44, 56, 255};
     DrawRectangleRec(run_btn, run_background);
     DrawRectangleLinesEx(run_btn, zoom, run_color);
-    float play_pad = 5.0f * zoom;
+    float play_pad = 6.0f * zoom;
     DrawTriangle((Vector2){run_btn.x + play_pad, run_btn.y + play_pad},
                  (Vector2){run_btn.x + play_pad, run_btn.y + run_btn.height - play_pad},
                  (Vector2){run_btn.x + run_btn.width - play_pad, run_btn.y + run_btn.height * 0.5f}, run_color);
@@ -216,9 +160,6 @@ void DrawNodePorts(GraphContext *graph, Node *node) {
 }
 
 void DrawNodeContent(GraphContext *graph, Node *node) {
-    if (node->collapsed) {
-        return;
-    }
     Rectangle bounds = NodeScreenBounds(graph, node);
     float zoom = CanvasZoom(graph);
     float body_font_size = ScaledFontSize(BODY_TEXT_SIZE, zoom);
@@ -226,10 +167,7 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
 
     if (node->type == NODE_DIRECTORY_LIST || node->type == NODE_STRING_FILTER || node->type == NODE_EXEC ||
         node->type == NODE_HTTP_REQUEST) {
-        float text_box_y = node->type == NODE_DIRECTORY_LIST || node->type == NODE_HTTP_REQUEST ? 50.0f : 76.0f;
-        float count_y = node->type == NODE_DIRECTORY_LIST || node->type == NODE_HTTP_REQUEST ? 114.0f
-                        : node->type == NODE_EXEC                                            ? 150.0f
-                                                                                             : 176.0f;
+        float text_box_y = NODE_HEADER_HEIGHT + 16.0f;
         Rectangle text_box = {bounds.x + 14 * zoom, bounds.y + text_box_y * zoom, bounds.width - 28 * zoom, 30 * zoom};
         SetNodeGuiScale(zoom);
         char before[128];
@@ -323,16 +261,17 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
         Color state_color = node->evaluation_failed ? (Color){235, 87, 87, 255}
                             : node->is_dirty        ? COLOR_STRING
                                                     : COLOR_STRING_LIST;
+        float state_y = bounds.y + bounds.height - 21.0f * zoom;
         if (node->type == NODE_EXEC) {
             Port *errors = NodeOutputPort(graph, node, 1);
             DrawInterfaceText(fonts.node_body,
                               TextFormat("%s | %d stdout | %d stderr", state_label, output ? output->item_count : 0,
                                          errors ? errors->item_count : 0),
-                              bounds.x + 14 * zoom, bounds.y + count_y * zoom, body_font_size, state_color);
+                              bounds.x + 14 * zoom, state_y, body_font_size, state_color);
         } else {
             int count = output ? output->item_count : 0;
             DrawInterfaceText(fonts.node_body, TextFormat("%s | %d item%s", state_label, count, count == 1 ? "" : "s"),
-                              bounds.x + 14 * zoom, bounds.y + count_y * zoom, body_font_size, state_color);
+                              bounds.x + 14 * zoom, state_y, body_font_size, state_color);
         }
     }
 }
@@ -343,23 +282,6 @@ void DrawNode(GraphContext *graph, Node *node) {
     DrawNodePorts(graph, node);
 }
 
-bool MouseOverCollapseButton(GraphContext *graph, Node *node, Vector2 mouse) {
-    if (!node) {
-        return false;
-    }
-    Rectangle bounds = NodeScreenBounds(graph, node);
-    float zoom = CanvasZoom(graph);
-    float tab_w = 28.0f * zoom;
-    float tab_h = 10.0f * zoom;
-    Rectangle btn = {
-        bounds.x + (bounds.width - tab_w) * 0.5f,
-        bounds.y + bounds.height - tab_h * 0.5f,
-        tab_w,
-        tab_h,
-    };
-    return CheckCollisionPointRec(mouse, btn);
-}
-
 bool MouseOverNodeControl(GraphContext *graph, Node *node, Vector2 mouse) {
     if (!node) {
         return false;
@@ -367,12 +289,9 @@ bool MouseOverNodeControl(GraphContext *graph, Node *node, Vector2 mouse) {
     if (CheckCollisionPointRec(mouse, NodeRunButtonBounds(graph, node))) {
         return true;
     }
-    if (node->collapsed) {
-        return false;
-    }
     Rectangle b = NodeScreenBounds(graph, node);
     float z = CanvasZoom(graph);
-    float control_y = (node->type == NODE_DIRECTORY_LIST || node->type == NODE_HTTP_REQUEST) ? 44.0f : 70.0f;
+    float control_y = NODE_HEADER_HEIGHT + 10.0f;
     float control_h = node->type == NODE_STRING_FILTER ? 76.0f : 42.0f;
     return CheckCollisionPointRec(mouse,
                                   (Rectangle){b.x + 10 * z, b.y + control_y * z, b.width - 20 * z, control_h * z});

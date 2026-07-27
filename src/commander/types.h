@@ -64,7 +64,6 @@ typedef struct {
     bool evaluation_failed;
     bool has_evaluated;
     bool text_editing;
-    bool collapsed;
     char parameter[128];
     bool filter_case_sensitive;
     bool filter_whole_word;
