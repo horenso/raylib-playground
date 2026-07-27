@@ -4,12 +4,14 @@
 #include "input.h"
 #include "raylib.h"
 #include "render.h"
+#include "serialize.h"
 #include "types.h"
 
 #include "raygui.h"
+#include <stdio.h>
 
-int main(void) {
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
+int main(int argc, char **argv) {
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1280, 760, "Commander - visual dataflow shell");
     SetWindowMinSize(900, 560);
     SetTargetFPS(60);
@@ -26,7 +28,22 @@ int main(void) {
     GuiSetStyle(TEXTBOX, TEXT_COLOR_PRESSED, 0xE1E6EFFF);
 
     static GraphContext graph = {0};
-    SeedGraph(&graph);
+    graph.selected_node_id = -1;
+    graph.active_port_id = -1;
+    graph.dragging_node_id = -1;
+    graph.inspected_port_id = -1;
+
+    if (argc >= 2) {
+        if (LoadGraph(&graph, argv[1])) {
+            TextCopy(graph.current_file, argv[1]);
+            snprintf(graph.status, sizeof(graph.status), "Loaded: %s", argv[1]);
+        } else {
+            SeedGraph(&graph);
+            snprintf(graph.status, sizeof(graph.status), "Could not load %s — starting blank", argv[1]);
+        }
+    } else {
+        SeedGraph(&graph);
+    }
 
     while (!WindowShouldClose()) {
         UpdateCanvas(&graph);
@@ -71,6 +88,7 @@ int main(void) {
 
         DrawToolbar(&graph);
         DrawStatusBar(&graph);
+
         EndDrawing();
     }
 

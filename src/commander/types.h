@@ -86,6 +86,9 @@ typedef struct {
     bool knife_active;
     Vector2 knife_start;
     bool add_menu_open;
+    bool open_dialog_open;
+    char open_dialog_path[MAX_PATH_LENGTH];
+    char current_file[MAX_PATH_LENGTH];
     bool evaluation_error;
     char status[160];
     int inspected_port_id; // -1 = none; output port whose items are shown in the inspector panel

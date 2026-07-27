@@ -1,0 +1,183 @@
+#include "serialize.h"
+#include "graph.h"
+#include <stdio.h>
+#include <string.h>
+
+// File format (text):
+//   camera <zoom> <target_x> <target_y>
+//   node <id> <type> <x> <y> <w> <h> <collapsed> <parameter_escaped> <case_sensitive> <whole_word> <use_regex>
+//   port <id> <node_id> <name> <data_type> <direction> <rel_x> <rel_y>
+//   link <from_port_id> <to_port_id>
+//   eof
+
+static void escape(const char *src, char *dst, int dst_size) {
+    int j = 0;
+    for (int i = 0; src[i] && j < dst_size - 2; i++) {
+        if (src[i] == ' ') {
+            dst[j++] = '\\';
+            dst[j++] = '_';
+        } else if (src[i] == '\n') {
+            dst[j++] = '\\';
+            dst[j++] = 'n';
+        } else if (src[i] == '\\') {
+            dst[j++] = '\\';
+            dst[j++] = '\\';
+        } else {
+            dst[j++] = src[i];
+        }
+    }
+    dst[j] = '\0';
+}
+
+static void unescape(const char *src, char *dst, int dst_size) {
+    int j = 0;
+    for (int i = 0; src[i] && j < dst_size - 1; i++) {
+        if (src[i] == '\\' && src[i + 1]) {
+            i++;
+            if (src[i] == '_') {
+                dst[j++] = ' ';
+            } else if (src[i] == 'n') {
+                dst[j++] = '\n';
+            } else if (src[i] == '\\') {
+                dst[j++] = '\\';
+            } else {
+                dst[j++] = '\\';
+                dst[j++] = src[i];
+            }
+        } else {
+            dst[j++] = src[i];
+        }
+    }
+    dst[j] = '\0';
+}
+
+bool SaveGraph(GraphContext *graph, const char *path) {
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        return false;
+    }
+
+    fprintf(f, "camera %f %f %f\n", graph->camera.zoom, graph->camera.target.x, graph->camera.target.y);
+
+    for (int i = 0; i < graph->node_count; i++) {
+        Node *n = &graph->nodes[i];
+        char esc[512];
+        escape(n->parameter, esc, sizeof(esc));
+        char title_esc[128];
+        escape(n->title, title_esc, sizeof(title_esc));
+        fprintf(f, "node %d %d %f %f %f %f %d %s %d %d %d %s\n", n->id, (int)n->type, n->bounds.x, n->bounds.y,
+                n->bounds.width, n->bounds.height, (int)n->collapsed, esc, (int)n->filter_case_sensitive,
+                (int)n->filter_whole_word, (int)n->filter_use_regex, title_esc);
+    }
+
+    for (int i = 0; i < graph->port_count; i++) {
+        Port *p = &graph->ports[i];
+        char name_esc[64];
+        escape(p->name, name_esc, sizeof(name_esc));
+        fprintf(f, "port %d %d %s %d %d %f %f\n", p->id, p->node_id, name_esc, (int)p->data_type, (int)p->direction,
+                p->relative_pos.x, p->relative_pos.y);
+    }
+
+    for (int i = 0; i < graph->link_count; i++) {
+        fprintf(f, "link %d %d\n", graph->links[i].from_port_id, graph->links[i].to_port_id);
+    }
+
+    fprintf(f, "eof\n");
+    fclose(f);
+    return true;
+}
+
+bool LoadGraph(GraphContext *graph, const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        return false;
+    }
+
+    memset(graph->nodes, 0, sizeof(graph->nodes));
+    memset(graph->ports, 0, sizeof(graph->ports));
+    memset(graph->links, 0, sizeof(graph->links));
+    graph->node_count = 0;
+    graph->port_count = 0;
+    graph->link_count = 0;
+    graph->selected_node_id = -1;
+    graph->active_port_id = -1;
+    graph->dragging_node_id = -1;
+    graph->inspected_port_id = -1;
+    graph->add_menu_open = false;
+
+    char line[1024];
+    while (fgets(line, sizeof(line), f)) {
+        char tag[16];
+        if (sscanf(line, "%15s", tag) != 1) {
+            continue;
+        }
+
+        if (strcmp(tag, "eof") == 0) {
+            break;
+        }
+
+        if (strcmp(tag, "camera") == 0) {
+            sscanf(line, "camera %f %f %f", &graph->camera.zoom, &graph->camera.target.x, &graph->camera.target.y);
+
+        } else if (strcmp(tag, "node") == 0) {
+            if (graph->node_count >= MAX_NODES) {
+                continue;
+            }
+            Node *n = &graph->nodes[graph->node_count++];
+            memset(n, 0, sizeof(*n));
+            n->list_active = -1;
+            int type, collapsed, cs, ww, re;
+            char esc_param[512] = {0};
+            char esc_title[128] = {0};
+            sscanf(line, "node %d %d %f %f %f %f %d %511s %d %d %d %127s", &n->id, &type, &n->bounds.x, &n->bounds.y,
+                   &n->bounds.width, &n->bounds.height, &collapsed, esc_param, &cs, &ww, &re, esc_title);
+            n->type = (NodeType)type;
+            n->collapsed = (bool)collapsed;
+            n->filter_case_sensitive = (bool)cs;
+            n->filter_whole_word = (bool)ww;
+            n->filter_use_regex = (bool)re;
+            n->is_dirty = true;
+            unescape(esc_param, n->parameter, sizeof(n->parameter));
+            unescape(esc_title, n->title, sizeof(n->title));
+
+        } else if (strcmp(tag, "port") == 0) {
+            if (graph->port_count >= MAX_PORTS) {
+                continue;
+            }
+            Port *p = &graph->ports[graph->port_count++];
+            memset(p, 0, sizeof(*p));
+            int dtype, dir;
+            char name_esc[64] = {0};
+            sscanf(line, "port %d %d %63s %d %d %f %f", &p->id, &p->node_id, name_esc, &dtype, &dir, &p->relative_pos.x,
+                   &p->relative_pos.y);
+            p->data_type = (PortDataType)dtype;
+            p->direction = (PortDirection)dir;
+            unescape(name_esc, p->name, sizeof(p->name));
+
+            Node *n = NULL;
+            for (int i = 0; i < graph->node_count; i++) {
+                if (graph->nodes[i].id == p->node_id) {
+                    n = &graph->nodes[i];
+                    break;
+                }
+            }
+            if (n) {
+                if (p->direction == PORT_DIR_INPUT && n->input_count < 4) {
+                    n->input_port_ids[n->input_count++] = p->id;
+                } else if (p->direction == PORT_DIR_OUTPUT && n->output_count < 4) {
+                    n->output_port_ids[n->output_count++] = p->id;
+                }
+            }
+
+        } else if (strcmp(tag, "link") == 0) {
+            if (graph->link_count >= MAX_LINKS) {
+                continue;
+            }
+            Link *l = &graph->links[graph->link_count++];
+            sscanf(line, "link %d %d", &l->from_port_id, &l->to_port_id);
+        }
+    }
+
+    fclose(f);
+    return true;
+}

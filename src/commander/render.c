@@ -4,6 +4,7 @@
 #include "graph.h"
 #include "raylib.h"
 #include "raymath.h"
+#include "serialize.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -353,14 +354,43 @@ void DrawToolbar(GraphContext *graph) {
 
     if (GuiButton((Rectangle){12, 10, 116, 32}, "#08# Add node")) {
         graph->add_menu_open = !graph->add_menu_open;
+        graph->open_dialog_open = false;
     }
-    if (GuiButton((Rectangle){138, 10, 116, 32}, "#131# Run")) {
+    if (GuiButton((Rectangle){138, 10, 100, 32}, "#131# Run")) {
         RunGraph(graph);
     }
-    if (GuiButton((Rectangle){264, 10, 82, 32}, "Reset")) {
-        SeedGraph(graph);
+    if (GuiButton((Rectangle){248, 10, 82, 32}, "#01# Open")) {
+        graph->open_dialog_open = !graph->open_dialog_open;
+        graph->add_menu_open = false;
+    }
+    if (GuiButton((Rectangle){340, 10, 82, 32}, "#02# Save")) {
+        if (graph->current_file[0]) {
+            if (SaveGraph(graph, graph->current_file))
+                snprintf(graph->status, sizeof(graph->status), "Saved: %.140s", graph->current_file);
+            else
+                snprintf(graph->status, sizeof(graph->status), "Save failed: %.133s", graph->current_file);
+        } else {
+            graph->open_dialog_open = true;
+            graph->add_menu_open = false;
+            TextCopy(graph->status, "No file open — use Open to pick a file path first");
+        }
     }
 
+    // Ctrl+S shortcut
+    if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_S)) {
+        if (graph->current_file[0]) {
+            if (SaveGraph(graph, graph->current_file))
+                snprintf(graph->status, sizeof(graph->status), "Saved: %.140s", graph->current_file);
+            else
+                snprintf(graph->status, sizeof(graph->status), "Save failed: %.133s", graph->current_file);
+        } else {
+            graph->open_dialog_open = true;
+            graph->add_menu_open = false;
+        }
+    }
+
+    const char *fname = graph->current_file[0] ? graph->current_file : "(unsaved)";
+    DrawInterfaceText(fonts.body, fname, 440, 18, BODY_TEXT_SIZE, COLOR_MUTED);
     DrawInterfaceText(fonts.body, TextFormat("Zoom  %d%%", (int)(graph->camera.zoom * 100)), GetScreenWidth() - 112, 18,
                       BODY_TEXT_SIZE, COLOR_MUTED);
 
@@ -377,6 +407,42 @@ void DrawToolbar(GraphContext *graph) {
                 AddNode(graph, (NodeType)i, center);
                 graph->add_menu_open = false;
             }
+        }
+    }
+
+    if (graph->open_dialog_open) {
+        Rectangle dialog = {12, TOOLBAR_HEIGHT + 4, 400, 52};
+        DrawRectangleRec(dialog, (Color){30, 35, 44, 255});
+        DrawRectangleLinesEx(dialog, 1, (Color){75, 84, 101, 255});
+        DrawInterfaceText(fonts.body, "File path:", 22, TOOLBAR_HEIGHT + 12, BODY_TEXT_SIZE, COLOR_MUTED);
+        Rectangle input = {100, TOOLBAR_HEIGHT + 8, 220, 28};
+        static bool editing = false;
+        if (GuiTextBox(input, graph->open_dialog_path, sizeof(graph->open_dialog_path), editing)) {
+            editing = !editing;
+        }
+        if (GuiButton((Rectangle){328, TOOLBAR_HEIGHT + 8, 76, 28}, "Load")) {
+            if (LoadGraph(graph, graph->open_dialog_path)) {
+                TextCopy(graph->current_file, graph->open_dialog_path);
+                snprintf(graph->status, sizeof(graph->status), "Loaded: %.140s", graph->current_file);
+            } else {
+                snprintf(graph->status, sizeof(graph->status), "Failed to load: %.130s", graph->open_dialog_path);
+            }
+            graph->open_dialog_open = false;
+            editing = false;
+        }
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            graph->open_dialog_open = false;
+            editing = false;
+        }
+        if (IsKeyPressed(KEY_ENTER) && editing) {
+            if (LoadGraph(graph, graph->open_dialog_path)) {
+                TextCopy(graph->current_file, graph->open_dialog_path);
+                snprintf(graph->status, sizeof(graph->status), "Loaded: %.140s", graph->current_file);
+            } else {
+                snprintf(graph->status, sizeof(graph->status), "Failed to load: %.130s", graph->open_dialog_path);
+            }
+            graph->open_dialog_open = false;
+            editing = false;
         }
     }
 }
