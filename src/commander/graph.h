@@ -5,6 +5,8 @@
 Node *FindNode(GraphContext *graph, int id);
 Port *FindPort(GraphContext *graph, int id);
 Color PortColor(PortDataType type);
+Color NodeStateColor(const Node *node);
+Color PortStateColor(GraphContext *graph, Port *port);
 int AddPort(GraphContext *graph, Node *node, const char *name, PortDataType type, PortDirection direction, float y);
 Node *AddNode(GraphContext *graph, NodeType type, Vector2 position);
 bool AddLink(GraphContext *graph, int from_id, int to_id);

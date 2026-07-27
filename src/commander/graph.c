@@ -27,6 +27,34 @@ Port *FindPort(GraphContext *graph, int id) {
 
 Color PortColor(PortDataType type) { return type == PORT_TYPE_STRING_LIST ? COLOR_STRING_LIST : COLOR_STRING; }
 
+Color NodeStateColor(const Node *node) {
+    if (node && node->evaluation_failed) {
+        return (Color){235, 87, 87, 255};
+    }
+    return node && !node->is_dirty ? COLOR_STRING_LIST : COLOR_STRING;
+}
+
+Color PortStateColor(GraphContext *graph, Port *port) {
+    if (!port) {
+        return COLOR_STRING;
+    }
+
+    Node *state_node = FindNode(graph, port->node_id);
+    if (port->direction == PORT_DIR_INPUT) {
+        for (int i = 0; i < graph->link_count; i++) {
+            if (graph->links[i].to_port_id != port->id) {
+                continue;
+            }
+            Port *source = FindPort(graph, graph->links[i].from_port_id);
+            if (source) {
+                state_node = FindNode(graph, source->node_id);
+            }
+            break;
+        }
+    }
+    return NodeStateColor(state_node);
+}
+
 int AddPort(GraphContext *graph, Node *node, const char *name, PortDataType type, PortDirection direction, float y) {
     if (graph->port_count >= MAX_PORTS) {
         return -1;

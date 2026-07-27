@@ -82,9 +82,7 @@ void DrawNodeShell(GraphContext *graph, Node *node) {
     float border_w = knife_hit || graph->selected_node_id == node->id ? 2.0f : 1.0f;
     Color border_color = knife_hit                             ? (Color){255, 76, 92, 255}
                          : graph->selected_node_id == node->id ? COLOR_NODE_SELECTED
-                         : node->evaluation_failed             ? (Color){235, 87, 87, 255}
-                         : node->is_dirty                      ? COLOR_STRING
-                                                               : (Color){66, 74, 91, 255};
+                                                               : NodeStateColor(node);
     // Header/options separator and the dedicated connector/status section.
     DrawLineEx((Vector2){bounds.x, bounds.y + NODE_HEADER_HEIGHT * zoom},
                (Vector2){bounds.x + bounds.width, bounds.y + NODE_HEADER_HEIGHT * zoom}, 1.0f, border_color);
@@ -108,7 +106,7 @@ void DrawNodeShell(GraphContext *graph, Node *node) {
             if (!port) {
                 continue;
             }
-            Color port_color = PortColor(port->data_type);
+            Color port_color = PortStateColor(graph, port);
             float label_w = MeasureTextEx(fonts.node_small, port->name, chip_font, 0).x;
             float chip_w = label_w + chip_pad * 2;
             Vector2 port_pos = PortScreenPosition(graph, port);
@@ -129,9 +127,7 @@ void DrawNodeShell(GraphContext *graph, Node *node) {
                       bounds.y + (NODE_HEADER_HEIGHT * zoom - title_font_size) * 0.5f, title_font_size, COLOR_TEXT);
 
     bool run_hovered = NodeOwnsMouse(graph, node) && CheckCollisionPointRec(GetMousePosition(), run_btn);
-    Color run_color = node->evaluation_failed ? (Color){235, 87, 87, 255}
-                      : node->is_dirty        ? COLOR_STRING
-                                              : COLOR_STRING_LIST;
+    Color run_color = NodeStateColor(node);
     Color run_background = run_hovered ? (Color){75, 84, 101, 255} : (Color){38, 44, 56, 255};
     DrawRectangleRec(run_btn, run_background);
     DrawRectangleLinesEx(run_btn, zoom, run_color);
@@ -152,7 +148,7 @@ void DrawNodePorts(GraphContext *graph, Node *node) {
         for (int i = 0; i < count; i++) {
             Port *port = FindPort(graph, ids[i]);
             Vector2 p = PortScreenPosition(graph, port);
-            Color color = PortColor(port->data_type);
+            Color color = PortStateColor(graph, port);
             float r = PORT_RADIUS * CanvasZoom(graph);
             DrawCircleSector(p, r, 0, 360, 36, color);
         }
@@ -317,9 +313,7 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
                                   : node->is_dirty && node->has_evaluated ? "DIRTY | cached"
                                   : node->is_dirty                        ? "NOT RUN"
                                                                           : "CURRENT";
-        Color state_color = node->evaluation_failed ? (Color){235, 87, 87, 255}
-                            : node->is_dirty        ? COLOR_STRING
-                                                    : COLOR_STRING_LIST;
+        Color state_color = NodeStateColor(node);
         float state_y = bounds.y + bounds.height - 21.0f * zoom;
         if (node->type == NODE_EXEC) {
             Port *errors = NodeOutputPort(graph, node, 1);

@@ -68,7 +68,7 @@ int main(int argc, char **argv) {
             if (from && to) {
                 bool knife_hit = graph.knife_active &&
                                  LinkIntersectsKnife(&graph, graph.links[i], graph.knife_start, GetMousePosition());
-                Color color = knife_hit ? (Color){255, 76, 92, 255} : PortColor(from->data_type);
+                Color color = knife_hit ? (Color){255, 76, 92, 255} : PortStateColor(&graph, from);
                 float thickness = (knife_hit ? 4.0f : 3.0f) * ApplicationScale(&graph);
                 DrawConnection(PortScreenPosition(&graph, from), PortScreenPosition(&graph, to), color, thickness);
             }
@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
         if (graph.active_port_id >= 0) {
             Port *port = FindPort(&graph, graph.active_port_id);
             if (port) {
-                DrawConnection(PortScreenPosition(&graph, port), GetMousePosition(), PortColor(port->data_type),
+                DrawConnection(PortScreenPosition(&graph, port), GetMousePosition(), PortStateColor(&graph, port),
                                3.0f * ApplicationScale(&graph));
             }
         }
