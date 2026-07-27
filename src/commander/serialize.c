@@ -129,6 +129,7 @@ bool LoadGraph(GraphContext *graph, const char *path) {
             Node *n = &graph->nodes[graph->node_count++];
             memset(n, 0, sizeof(*n));
             n->list_active = -1;
+            n->editing_control = -1;
             int type, cs, ww, re, exclude = 0;
             int directory_entry_type = DIRECTORY_ENTRY_FILES;
             int directory_recursive = 0;

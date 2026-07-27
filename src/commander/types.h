@@ -9,11 +9,52 @@
 #define MAX_LINKS 64
 #define MAX_ITEMS 256
 #define MAX_PATH_LENGTH 512
+#define MAX_FIELDS 8
+#define MAX_FIELD_NAME 32
 
 typedef enum {
-    PORT_TYPE_STRING,
-    PORT_TYPE_STRING_LIST,
-} PortDataType;
+    VALUE_NONE,
+    VALUE_STRING,
+    VALUE_PATH,
+    VALUE_BOOL,
+    VALUE_INT,
+    VALUE_FILE_SIZE,
+    VALUE_DATETIME,
+    VALUE_FILE_KIND,
+    VALUE_RECORD,
+} ValueType;
+
+// Ports always carry streams. The type describes one item in the stream;
+// cardinality is no longer encoded in names such as STRING_LIST.
+typedef ValueType PortDataType;
+#define PORT_TYPE_STRING VALUE_STRING
+#define PORT_TYPE_STRING_LIST VALUE_STRING
+
+typedef struct {
+    char name[MAX_FIELD_NAME];
+    ValueType type;
+    bool derived;
+} FieldSchema;
+
+typedef struct {
+    FieldSchema fields[MAX_FIELDS];
+    int field_count;
+} RecordSchema;
+
+typedef struct {
+    ValueType type;
+    union {
+        char text[MAX_PATH_LENGTH];
+        bool boolean;
+        long long integer;
+        unsigned long long file_size;
+        long long datetime;
+    } as;
+} StreamValue;
+
+typedef struct {
+    StreamValue values[MAX_FIELDS];
+} StreamItem;
 
 typedef enum {
     PORT_DIR_INPUT,
@@ -25,7 +66,15 @@ typedef enum {
     NODE_STRING_FILTER,
     NODE_EXEC,
     NODE_HTTP_REQUEST,
+    NODE_INSERT,
+    NODE_GET,
 } NodeType;
+
+typedef enum {
+    INSERT_REPLACE_TEXT,
+    INSERT_REPLACE_FILENAME,
+    INSERT_REPLACE_EXTENSION,
+} InsertOperation;
 
 typedef enum {
     DIRECTORY_ENTRY_FILES,
@@ -46,9 +95,11 @@ typedef struct {
     int node_id;
     char name[32];
     PortDataType data_type;
+    RecordSchema schema;
+    bool schema_valid;
     PortDirection direction;
     Vector2 relative_pos;
-    char items[MAX_ITEMS][MAX_PATH_LENGTH];
+    StreamItem items[MAX_ITEMS];
     int item_count;
 } Port;
 
@@ -70,7 +121,14 @@ typedef struct {
     bool evaluation_failed;
     bool has_evaluated;
     bool text_editing;
+    int editing_control;
     char parameter[128];
+    char secondary_parameter[128];
+    char field_name[MAX_FIELD_NAME];
+    char output_field_name[MAX_FIELD_NAME];
+    InsertOperation insert_operation;
+    bool schema_error;
+    char schema_error_message[96];
     DirectoryEntryType directory_entry_type;
     bool directory_recursive;
     bool filter_case_sensitive;

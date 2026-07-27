@@ -1,5 +1,6 @@
 #include "graph.h"
 #include "config.h"
+#include "streams.h"
 
 #include "raylib.h"
 #include "raymath.h"
@@ -25,10 +26,22 @@ Port *FindPort(GraphContext *graph, int id) {
     return NULL;
 }
 
-Color PortColor(PortDataType type) { return type == PORT_TYPE_STRING_LIST ? COLOR_STRING_LIST : COLOR_STRING; }
+Color PortColor(PortDataType type) {
+    switch (type) {
+    case VALUE_RECORD:
+        return (Color){102, 198, 160, 255};
+    case VALUE_PATH:
+        return (Color){224, 174, 92, 255};
+    case VALUE_FILE_SIZE:
+    case VALUE_INT:
+        return (Color){180, 132, 230, 255};
+    default:
+        return COLOR_STRING_LIST;
+    }
+}
 
 Color NodeStateColor(const Node *node) {
-    if (node && node->evaluation_failed) {
+    if (node && (node->evaluation_failed || node->schema_error)) {
         return (Color){235, 87, 87, 255};
     }
     return node && !node->is_dirty ? COLOR_STRING_LIST : COLOR_STRING;
@@ -70,6 +83,7 @@ int AddPort(GraphContext *graph, Node *node, const char *name, PortDataType type
     port->id = id;
     port->node_id = node->id;
     port->data_type = type;
+    port->schema_valid = type != VALUE_NONE;
     port->direction = direction;
     port->relative_pos = (Vector2){direction == PORT_DIR_INPUT ? 0.0f : node->bounds.width, y};
     TextCopy(port->name, name);
@@ -99,6 +113,7 @@ Node *AddNode(GraphContext *graph, NodeType type, Vector2 position) {
     node->bounds = (Rectangle){position.x, position.y, 250, 164};
     node->is_dirty = true;
     node->list_active = -1;
+    node->editing_control = -1;
 
     switch (type) {
     case NODE_DIRECTORY_LIST:
@@ -106,40 +121,83 @@ Node *AddNode(GraphContext *graph, NodeType type, Vector2 position) {
         TextCopy(node->parameter, ".");
         node->directory_entry_type = DIRECTORY_ENTRY_FILES;
         node->bounds.height = 220;
-        AddPort(graph, node, "Files", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 112);
+        AddPort(graph, node, "Rows", VALUE_RECORD, PORT_DIR_OUTPUT, 112);
+        Port *files = NodeOutputPort(graph, node, 0);
+        if (files) {
+            SchemaAddField(&files->schema, "path", VALUE_PATH, false);
+            SchemaAddField(&files->schema, "name", VALUE_STRING, false);
+            SchemaAddField(&files->schema, "type", VALUE_FILE_KIND, false);
+            SchemaAddField(&files->schema, "size", VALUE_FILE_SIZE, false);
+            SchemaAddField(&files->schema, "modified", VALUE_DATETIME, false);
+        }
         break;
     case NODE_STRING_FILTER:
-        TextCopy(node->title, "Filter");
+        TextCopy(node->title, "Where");
         TextCopy(node->parameter, "\\.c$");
         node->filter_use_regex = true;
-        node->bounds.height = 186;
-        AddPort(graph, node, "Files", PORT_TYPE_STRING_LIST, PORT_DIR_INPUT, 55);
-        AddPort(graph, node, "Matches", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 178);
+        node->bounds.height = 220;
+        AddPort(graph, node, "Stream", VALUE_NONE, PORT_DIR_INPUT, 55);
+        AddPort(graph, node, "Rows", VALUE_NONE, PORT_DIR_OUTPUT, 178);
         break;
     case NODE_EXEC:
         TextCopy(node->title, "Exec");
         TextCopy(node->parameter, "sort");
         node->bounds.width = 320;
         node->bounds.height = 184;
-        AddPort(graph, node, "Stdin", PORT_TYPE_STRING_LIST, PORT_DIR_INPUT, 55);
-        AddPort(graph, node, "Stdout", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 148);
-        AddPort(graph, node, "Stderr", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 148);
+        AddPort(graph, node, "Stdin", VALUE_STRING, PORT_DIR_INPUT, 55);
+        AddPort(graph, node, "Stdout", VALUE_STRING, PORT_DIR_OUTPUT, 148);
+        AddPort(graph, node, "Stderr", VALUE_STRING, PORT_DIR_OUTPUT, 148);
         break;
     case NODE_HTTP_REQUEST:
         TextCopy(node->title, "HTTP Request");
         TextCopy(node->parameter, "https://");
         node->bounds.height = 164;
-        AddPort(graph, node, "Lines", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 112);
+        AddPort(graph, node, "Lines", VALUE_STRING, PORT_DIR_OUTPUT, 112);
+        break;
+    case NODE_INSERT:
+        TextCopy(node->title, "Insert");
+        TextCopy(node->parameter, "IMG_");
+        TextCopy(node->secondary_parameter, "holiday_");
+        TextCopy(node->output_field_name, "destination");
+        node->bounds.width = 300;
+        node->bounds.height = 300;
+        AddPort(graph, node, "Stream", VALUE_NONE, PORT_DIR_INPUT, 55);
+        AddPort(graph, node, "Rows", VALUE_NONE, PORT_DIR_OUTPUT, 178);
+        break;
+    case NODE_GET:
+        TextCopy(node->title, "Get");
+        node->bounds.height = 150;
+        AddPort(graph, node, "Rows", VALUE_RECORD, PORT_DIR_INPUT, 55);
+        AddPort(graph, node, "Values", VALUE_NONE, PORT_DIR_OUTPUT, 112);
         break;
     }
+    PropagateSchemas(graph);
     return node;
+}
+
+static bool PortCanFeedNode(const Port *from, const Node *consumer) {
+    if (!from || !consumer || !from->schema_valid) {
+        return false;
+    }
+    switch (consumer->type) {
+    case NODE_EXEC:
+        return from->data_type == VALUE_STRING;
+    case NODE_GET:
+        return from->data_type == VALUE_RECORD;
+    case NODE_STRING_FILTER:
+    case NODE_INSERT:
+        return true;
+    default:
+        return false;
+    }
 }
 
 bool AddLink(GraphContext *graph, int from_id, int to_id) {
     Port *from = FindPort(graph, from_id);
     Port *to = FindPort(graph, to_id);
+    Node *consumer = to ? FindNode(graph, to->node_id) : NULL;
     if (!from || !to || from->direction != PORT_DIR_OUTPUT || to->direction != PORT_DIR_INPUT ||
-        from->data_type != to->data_type || from->node_id == to->node_id) {
+        from->node_id == to->node_id || !PortCanFeedNode(from, consumer)) {
         return false;
     }
 
@@ -152,6 +210,7 @@ bool AddLink(GraphContext *graph, int from_id, int to_id) {
         return false;
     }
     graph->links[graph->link_count++] = (Link){.from_port_id = from_id, .to_port_id = to_id};
+    PropagateSchemas(graph);
     MarkNodeDirty(graph, to->node_id);
     return true;
 }
@@ -169,6 +228,7 @@ void RemoveLinkAt(GraphContext *graph, int index) {
     }
     DirtyLinkTarget(graph, graph->links[index]);
     graph->links[index] = graph->links[--graph->link_count];
+    PropagateSchemas(graph);
 }
 
 int DetachInput(GraphContext *graph, int input_port_id) {
@@ -252,6 +312,141 @@ static void MarkDirtyRecursive(GraphContext *graph, int node_id, bool visited[MA
 void MarkNodeDirty(GraphContext *graph, int node_id) {
     bool visited[MAX_NODES] = {0};
     MarkDirtyRecursive(graph, node_id, visited);
+    PropagateSchemas(graph);
+}
+
+static void SetSchemaError(Node *node, const char *message) {
+    node->schema_error = true;
+    TextCopy(node->schema_error_message, message);
+}
+
+static const FieldSchema *ChooseDefaultField(Node *node, const Port *input) {
+    if (input->data_type != VALUE_RECORD) {
+        if (!node->field_name[0]) {
+            TextCopy(node->field_name, "Item");
+        }
+        return NULL;
+    }
+    if (!node->field_name[0]) {
+        int preferred = SchemaFieldIndex(&input->schema, node->type == NODE_INSERT ? "path" : "name");
+        if (preferred < 0) {
+            preferred = 0;
+        }
+        if (preferred >= 0 && preferred < input->schema.field_count) {
+            TextCopy(node->field_name, input->schema.fields[preferred].name);
+        }
+    }
+    int index = SchemaFieldIndex(&input->schema, node->field_name);
+    return index >= 0 ? &input->schema.fields[index] : NULL;
+}
+
+void PropagateSchemas(GraphContext *graph) {
+    // Source schemas are intrinsic. Everything else is recomputed without
+    // evaluating runtime values.
+    for (int i = 0; i < graph->node_count; i++) {
+        Node *node = &graph->nodes[i];
+        node->schema_error = false;
+        node->schema_error_message[0] = '\0';
+        for (int p = 0; p < node->input_count; p++) {
+            Port *input = FindPort(graph, node->input_port_ids[p]);
+            if (input) {
+                input->schema_valid = false;
+                input->data_type = node->type == NODE_GET    ? VALUE_RECORD
+                                   : node->type == NODE_EXEC ? VALUE_STRING
+                                                             : VALUE_NONE;
+                memset(&input->schema, 0, sizeof(input->schema));
+            }
+        }
+        if (node->type == NODE_STRING_FILTER || node->type == NODE_INSERT || node->type == NODE_GET) {
+            Port *output = NodeOutputPort(graph, node, 0);
+            if (output) {
+                output->schema_valid = false;
+                output->data_type = VALUE_NONE;
+                memset(&output->schema, 0, sizeof(output->schema));
+            }
+        }
+    }
+
+    for (int pass = 0; pass < graph->node_count; pass++) {
+        bool changed = false;
+        for (int i = 0; i < graph->link_count; i++) {
+            Port *source = FindPort(graph, graph->links[i].from_port_id);
+            Port *input = FindPort(graph, graph->links[i].to_port_id);
+            if (source && input && source->schema_valid && !input->schema_valid) {
+                input->data_type = source->data_type;
+                input->schema = source->schema;
+                input->schema_valid = true;
+                changed = true;
+            }
+        }
+
+        for (int i = 0; i < graph->node_count; i++) {
+            Node *node = &graph->nodes[i];
+            if (node->type != NODE_STRING_FILTER && node->type != NODE_INSERT && node->type != NODE_GET) {
+                continue;
+            }
+            Port *input = FindPort(graph, node->input_port_ids[0]);
+            Port *output = NodeOutputPort(graph, node, 0);
+            if (!input || !output || !input->schema_valid) {
+                continue;
+            }
+            const FieldSchema *selected = ChooseDefaultField(node, input);
+            ValueType selected_type = input->data_type;
+            if (input->data_type == VALUE_RECORD) {
+                if (!selected) {
+                    SetSchemaError(node, "Selected field is not in the input schema");
+                    continue;
+                }
+                selected_type = selected->type;
+            } else if (!TextIsEqual(node->field_name, "Item")) {
+                SetSchemaError(node, "Primitive streams expose only the Item field");
+                continue;
+            }
+
+            if (node->type == NODE_STRING_FILTER && !ValueTypeIsText(selected_type)) {
+                SetSchemaError(node, "Where currently supports text-like fields");
+                continue;
+            }
+            if (node->type == NODE_INSERT) {
+                if (!ValueTypeIsText(selected_type)) {
+                    SetSchemaError(node, "Insert currently supports text-like fields");
+                    continue;
+                }
+                if (!node->output_field_name[0]) {
+                    SetSchemaError(node, "Insert needs a new field name");
+                    continue;
+                }
+                if (input->data_type == VALUE_RECORD &&
+                    SchemaFieldIndex(&input->schema, node->output_field_name) >= 0) {
+                    SetSchemaError(node, "Insert cannot overwrite an existing field");
+                    continue;
+                }
+                output->data_type = VALUE_RECORD;
+                output->schema = input->schema;
+                if (input->data_type != VALUE_RECORD) {
+                    memset(&output->schema, 0, sizeof(output->schema));
+                    SchemaAddField(&output->schema, "Item", input->data_type, false);
+                }
+                if (!SchemaAddField(&output->schema, node->output_field_name, selected_type, true)) {
+                    SetSchemaError(node, "Record has no room for another field");
+                    continue;
+                }
+            } else if (node->type == NODE_GET) {
+                output->data_type = selected_type;
+                memset(&output->schema, 0, sizeof(output->schema));
+            } else {
+                output->data_type = input->data_type;
+                output->schema = input->schema;
+            }
+            if (!output->schema_valid) {
+                output->schema_valid = true;
+                changed = true;
+            }
+        }
+        if (!changed) {
+            break;
+        }
+    }
 }
 
 Port *InputSourcePort(GraphContext *graph, Node *node, int input_index) {

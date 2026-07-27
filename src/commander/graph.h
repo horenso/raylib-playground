@@ -15,6 +15,7 @@ int DetachInput(GraphContext *graph, int input_port_id);
 void RemoveNode(GraphContext *graph, int node_id);
 bool IsEditingText(GraphContext *graph);
 void MarkNodeDirty(GraphContext *graph, int node_id);
+void PropagateSchemas(GraphContext *graph);
 Port *InputSourcePort(GraphContext *graph, Node *node, int input_index);
 Port *NodeOutputPort(GraphContext *graph, Node *node, int output_index);
 void BringNodeToFront(GraphContext *graph, int id);

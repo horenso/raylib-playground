@@ -3,6 +3,7 @@
 #include "fonts.h"
 #include "graph.h"
 #include "serialize.h"
+#include "streams.h"
 
 #include "raygui.h"
 #include "raylib.h"
@@ -107,7 +108,9 @@ void DrawNodeShell(GraphContext *graph, Node *node) {
                 continue;
             }
             Color port_color = PortStateColor(graph, port);
-            float label_w = MeasureTextEx(fonts.node_small, port->name, chip_font, 0).x;
+            const char *chip_label =
+                TextFormat("%s · %s", port->name, port->schema_valid ? ValueTypeName(port->data_type) : "?");
+            float label_w = MeasureTextEx(fonts.node_small, chip_label, chip_font, 0).x;
             float chip_w = label_w + chip_pad * 2;
             Vector2 port_pos = PortScreenPosition(graph, port);
             float chip_x =
@@ -115,7 +118,7 @@ void DrawNodeShell(GraphContext *graph, Node *node) {
             Rectangle chip = {chip_x, port_pos.y - chip_h * 0.5f, chip_w, chip_h};
             DrawRectangleRec(chip, (Color){port_color.r, port_color.g, port_color.b, 40});
             DrawRectangleLinesEx(chip, unit, (Color){port_color.r, port_color.g, port_color.b, 120});
-            DrawInterfaceText(fonts.node_small, port->name, chip.x + chip_pad, chip.y + (chip_h - chip_font) * 0.5f,
+            DrawInterfaceText(fonts.node_small, chip_label, chip.x + chip_pad, chip.y + (chip_h - chip_font) * 0.5f,
                               chip_font, port_color);
         }
     }
@@ -168,6 +171,63 @@ static bool DrawNodeOptionButton(GraphContext *graph, Node *node, Rectangle boun
            CheckCollisionPointRec(GetMousePosition(), bounds);
 }
 
+static bool FieldIsSelectable(const Node *node, ValueType type) {
+    return node->type == NODE_GET || ValueTypeIsText(type);
+}
+
+static const char *NextFieldName(Node *node, Port *input) {
+    if (!input || !input->schema_valid || input->data_type != VALUE_RECORD) {
+        return "Item";
+    }
+    int current = SchemaFieldIndex(&input->schema, node->field_name);
+    for (int offset = 1; offset <= input->schema.field_count; offset++) {
+        int index = (current + offset) % input->schema.field_count;
+        if (FieldIsSelectable(node, input->schema.fields[index].type)) {
+            return input->schema.fields[index].name;
+        }
+    }
+    return "";
+}
+
+static void DrawFieldSelector(GraphContext *graph, Node *node, float y_units, const char *label) {
+    Rectangle bounds = NodeScreenBounds(graph, node);
+    Port *input = InputSourcePort(graph, node, 0);
+    float font_size = ScaledFontSize(BODY_TEXT_SIZE, CanvasUnit(graph));
+    DrawInterfaceText(fonts.node_body, label, bounds.x + CanvasSize(graph, 14.0f),
+                      bounds.y + CanvasSize(graph, y_units + 6.0f), font_size, COLOR_MUTED);
+    Rectangle button = {
+        bounds.x + CanvasSize(graph, 72.0f),
+        bounds.y + CanvasSize(graph, y_units),
+        bounds.width - CanvasSize(graph, 86.0f),
+        CanvasSize(graph, 26.0f),
+    };
+    const char *field = node->field_name[0] ? node->field_name : "connect input";
+    DrawRectangleRec(button, (Color){48, 55, 70, 255});
+    DrawRectangleLinesEx(button, CanvasUnit(graph),
+                         node->schema_error ? (Color){235, 87, 87, 255} : (Color){75, 84, 101, 255});
+    DrawInterfaceText(fonts.node_body, TextFormat("%s  ▾", field), button.x + CanvasSize(graph, 7.0f),
+                      button.y + (button.height - font_size) * 0.5f, font_size, COLOR_TEXT);
+    if (NodeOwnsMouse(graph, node) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+        CheckCollisionPointRec(GetMousePosition(), button) && input) {
+        TextCopy(node->field_name, NextFieldName(node, input));
+        MarkNodeDirty(graph, node->id);
+        TextCopy(graph->status, "Field selection changed - downstream schemas updated");
+    }
+}
+
+static bool DrawNodeTextBox(GraphContext *graph, Node *node, Rectangle bounds, char *text, int capacity,
+                            int control_id) {
+    char before[128];
+    TextCopy(before, text);
+    SetNodeGuiScale(CanvasUnit(graph));
+    bool changed_editing = GuiTextBox(bounds, text, capacity, node->editing_control == control_id);
+    if (changed_editing) {
+        node->editing_control = node->editing_control == control_id ? -1 : control_id;
+        node->text_editing = node->editing_control >= 0;
+    }
+    return strcmp(before, text) != 0;
+}
+
 void DrawNodeContent(GraphContext *graph, Node *node) {
     Rectangle bounds = NodeScreenBounds(graph, node);
     float unit = CanvasUnit(graph);
@@ -176,7 +236,10 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
 
     if (node->type == NODE_DIRECTORY_LIST || node->type == NODE_STRING_FILTER || node->type == NODE_EXEC ||
         node->type == NODE_HTTP_REQUEST) {
-        float text_box_y = NODE_HEADER_HEIGHT + 16.0f;
+        float text_box_y = node->type == NODE_STRING_FILTER ? NODE_HEADER_HEIGHT + 48.0f : NODE_HEADER_HEIGHT + 16.0f;
+        if (node->type == NODE_STRING_FILTER) {
+            DrawFieldSelector(graph, node, NODE_HEADER_HEIGHT + 12.0f, "Field");
+        }
         Rectangle text_box = {
             bounds.x + CanvasSize(graph, 14.0f),
             bounds.y + CanvasSize(graph, text_box_y),
@@ -320,7 +383,8 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
             }
         }
 
-        const char *state_label = node->evaluation_failed                 ? "FAILED"
+        const char *state_label = node->schema_error                      ? "SCHEMA ERROR"
+                                  : node->evaluation_failed               ? "FAILED"
                                   : node->is_dirty && node->has_evaluated ? "DIRTY | cached"
                                   : node->is_dirty                        ? "NOT RUN"
                                                                           : "CURRENT";
@@ -337,6 +401,58 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
             DrawInterfaceText(fonts.node_body, TextFormat("%s | %d item%s", state_label, count, count == 1 ? "" : "s"),
                               bounds.x + CanvasSize(graph, 14.0f), state_y, body_font_size, state_color);
         }
+    } else if (node->type == NODE_INSERT) {
+        DrawFieldSelector(graph, node, NODE_HEADER_HEIGHT + 10.0f, "From");
+        float x = bounds.x + CanvasSize(graph, 14.0f);
+        float width = bounds.width - CanvasSize(graph, 28.0f);
+        float output_y = bounds.y + CanvasSize(graph, NODE_HEADER_HEIGHT + 43.0f);
+        DrawInterfaceText(fonts.node_small, "New field", x, output_y, ScaledFontSize(BODY_TEXT_SIZE * 0.8f, unit),
+                          COLOR_MUTED);
+        Rectangle output_box = {x + CanvasSize(graph, 72.0f), output_y - CanvasSize(graph, 5.0f),
+                                width - CanvasSize(graph, 72.0f), CanvasSize(graph, 27.0f)};
+        if (DrawNodeTextBox(graph, node, output_box, node->output_field_name, sizeof(node->output_field_name), 0)) {
+            MarkNodeDirty(graph, node->id);
+        }
+
+        float find_y = bounds.y + CanvasSize(graph, NODE_HEADER_HEIGHT + 76.0f);
+        float replace_y = bounds.y + CanvasSize(graph, NODE_HEADER_HEIGHT + 111.0f);
+        DrawInterfaceText(fonts.node_small, "Find", x, find_y + CanvasSize(graph, 7.0f),
+                          ScaledFontSize(BODY_TEXT_SIZE * 0.8f, unit), COLOR_MUTED);
+        DrawInterfaceText(fonts.node_small, "With", x, replace_y + CanvasSize(graph, 7.0f),
+                          ScaledFontSize(BODY_TEXT_SIZE * 0.8f, unit), COLOR_MUTED);
+        Rectangle find_box = {x + CanvasSize(graph, 50.0f), find_y, width - CanvasSize(graph, 50.0f),
+                              CanvasSize(graph, 28.0f)};
+        Rectangle replace_box = {x + CanvasSize(graph, 50.0f), replace_y, width - CanvasSize(graph, 50.0f),
+                                 CanvasSize(graph, 28.0f)};
+        bool find_changed = DrawNodeTextBox(graph, node, find_box, node->parameter, sizeof(node->parameter), 1);
+        bool replacement_changed =
+            DrawNodeTextBox(graph, node, replace_box, node->secondary_parameter, sizeof(node->secondary_parameter), 2);
+        if (find_changed || replacement_changed) {
+            MarkNodeDirty(graph, node->id);
+        }
+
+        const char *operations[] = {"Text", "Filename", "Extension"};
+        float operation_y = bounds.y + CanvasSize(graph, NODE_HEADER_HEIGHT + 150.0f);
+        for (int i = 0; i < 3; i++) {
+            Rectangle button = {x + CanvasSize(graph, i * 88.0f), operation_y, CanvasSize(graph, 82.0f),
+                                CanvasSize(graph, 25.0f)};
+            if (DrawNodeOptionButton(graph, node, button, operations[i], node->insert_operation == (InsertOperation)i,
+                                     body_font_size) &&
+                node->insert_operation != (InsertOperation)i) {
+                node->insert_operation = (InsertOperation)i;
+                MarkNodeDirty(graph, node->id);
+            }
+        }
+        const char *state_label = node->schema_error ? node->schema_error_message
+                                  : node->is_dirty   ? "NOT RUN"
+                                                     : "CURRENT";
+        DrawInterfaceText(fonts.node_small, state_label, x, bounds.y + bounds.height - CanvasSize(graph, 21.0f),
+                          ScaledFontSize(BODY_TEXT_SIZE * 0.82f, unit), NodeStateColor(node));
+    } else if (node->type == NODE_GET) {
+        DrawFieldSelector(graph, node, NODE_HEADER_HEIGHT + 12.0f, "Field");
+        const char *state_label = node->schema_error ? "SCHEMA ERROR" : node->is_dirty ? "NOT RUN" : "CURRENT";
+        DrawInterfaceText(fonts.node_body, state_label, bounds.x + CanvasSize(graph, 14.0f),
+                          bounds.y + bounds.height - CanvasSize(graph, 21.0f), body_font_size, NodeStateColor(node));
     }
 }
 
@@ -355,7 +471,11 @@ bool MouseOverNodeControl(GraphContext *graph, Node *node, Vector2 mouse) {
     }
     Rectangle b = NodeScreenBounds(graph, node);
     float control_y = NODE_HEADER_HEIGHT + 10.0f;
-    float control_h = node->type == NODE_DIRECTORY_LIST ? 110.0f : node->type == NODE_STRING_FILTER ? 76.0f : 42.0f;
+    float control_h = node->type == NODE_DIRECTORY_LIST  ? 110.0f
+                      : node->type == NODE_STRING_FILTER ? 116.0f
+                      : node->type == NODE_INSERT        ? 190.0f
+                      : node->type == NODE_GET           ? 42.0f
+                                                         : 42.0f;
     return CheckCollisionPointRec(mouse, (Rectangle){
                                              b.x + CanvasSize(graph, 10.0f),
                                              b.y + CanvasSize(graph, control_y),
@@ -370,8 +490,11 @@ static Rectangle PortInspectorBounds(GraphContext *graph, int port_id) {
         return (Rectangle){0};
     }
     Vector2 p = PortScreenPosition(graph, port);
-    float w = UiSize(graph, 280.0f);
-    float h = UiSize(graph, 220.0f);
+    float w = UiSize(graph, port->data_type == VALUE_RECORD ? 720.0f : 280.0f);
+    if (w > GetScreenWidth() - UiSize(graph, 24.0f)) {
+        w = GetScreenWidth() - UiSize(graph, 24.0f);
+    }
+    float h = UiSize(graph, 240.0f);
     float x = p.x + UiSize(graph, PORT_RADIUS + 10.0f);
     float y = p.y - h * 0.3f;
     if (x + w > GetScreenWidth()) {
@@ -407,7 +530,8 @@ void DrawPortInspector(GraphContext *graph, int port_id, bool pinned) {
     float px = panel.x + UiSize(graph, 10.0f);
     float py = panel.y + UiSize(graph, 8.0f);
     DrawInterfaceText(fonts.body,
-                      TextFormat("%s  |  %d item%s", port->name, port->item_count, port->item_count == 1 ? "" : "s"),
+                      TextFormat("%s<%s>  |  %d item%s", port->name, ValueTypeName(port->data_type), port->item_count,
+                                 port->item_count == 1 ? "" : "s"),
                       px, py, body_font_size, COLOR_TEXT);
 
     Rectangle list_bounds = {
@@ -416,13 +540,67 @@ void DrawPortInspector(GraphContext *graph, int port_id, bool pinned) {
         panel.width - UiSize(graph, 16.0f),
         panel.height - UiSize(graph, 38.0f),
     };
-    char *entries[MAX_ITEMS];
-    int count = port->item_count;
-    for (int i = 0; i < count; i++) {
-        entries[i] = port->items[i];
+    if (port->data_type != VALUE_RECORD) {
+        char display[MAX_ITEMS][MAX_PATH_LENGTH];
+        char *entries[MAX_ITEMS];
+        int count = port->item_count;
+        for (int i = 0; i < count; i++) {
+            char formatted[64];
+            TextCopy(display[i], ValueDisplayText(&port->items[i].values[0], formatted, sizeof(formatted)));
+            entries[i] = display[i];
+        }
+        SetGuiScale(unit);
+        GuiListViewEx(list_bounds, entries, count, &graph->inspect_scroll, &graph->inspect_active, NULL);
+        return;
     }
-    SetGuiScale(unit);
-    GuiListViewEx(list_bounds, entries, count, &graph->inspect_scroll, &graph->inspect_active, NULL);
+
+    float header_height = UiSize(graph, 34.0f);
+    float row_height = UiSize(graph, 25.0f);
+    float column_width = list_bounds.width / port->schema.field_count;
+    Rectangle header = {list_bounds.x, list_bounds.y, list_bounds.width, header_height};
+    DrawRectangleRec(header, (Color){35, 41, 52, 255});
+    for (int column = 0; column < port->schema.field_count; column++) {
+        FieldSchema *field = &port->schema.fields[column];
+        float column_x = header.x + column * column_width;
+        Color name_color = field->derived ? (Color){116, 206, 173, 255} : COLOR_TEXT;
+        DrawInterfaceText(fonts.body, field->name, column_x + UiSize(graph, 6.0f), header.y + UiSize(graph, 4.0f),
+                          body_font_size, name_color);
+        DrawInterfaceText(fonts.body, ValueTypeName(field->type), column_x + UiSize(graph, 6.0f),
+                          header.y + UiSize(graph, 18.0f), ScaledFontSize(BODY_TEXT_SIZE * 0.72f, unit), COLOR_MUTED);
+        if (column > 0) {
+            DrawLineEx((Vector2){column_x, header.y}, (Vector2){column_x, list_bounds.y + list_bounds.height}, unit,
+                       (Color){58, 66, 81, 255});
+        }
+    }
+
+    int visible_rows = (int)((list_bounds.height - header_height) / row_height);
+    int max_scroll = port->item_count > visible_rows ? port->item_count - visible_rows : 0;
+    if (CheckCollisionPointRec(GetMousePosition(), panel)) {
+        graph->inspect_scroll -= (int)GetMouseWheelMove();
+    }
+    graph->inspect_scroll = (int)Clamp((float)graph->inspect_scroll, 0.0f, (float)max_scroll);
+    for (int visible = 0; visible < visible_rows; visible++) {
+        int row = visible + graph->inspect_scroll;
+        if (row >= port->item_count) {
+            break;
+        }
+        float row_y = list_bounds.y + header_height + visible * row_height;
+        if (row % 2) {
+            DrawRectangleRec((Rectangle){list_bounds.x, row_y, list_bounds.width, row_height},
+                             (Color){30, 35, 45, 255});
+        }
+        for (int column = 0; column < port->schema.field_count; column++) {
+            char formatted[64];
+            const char *text = ValueDisplayText(&port->items[row].values[column], formatted, sizeof(formatted));
+            Rectangle cell = {list_bounds.x + column * column_width + UiSize(graph, 5.0f), row_y,
+                              column_width - UiSize(graph, 10.0f), row_height};
+            BeginScissorMode((int)cell.x, (int)cell.y, (int)cell.width, (int)cell.height);
+            DrawInterfaceText(fonts.body, text, cell.x, cell.y + UiSize(graph, 5.0f),
+                              ScaledFontSize(BODY_TEXT_SIZE * 0.85f, unit),
+                              port->schema.fields[column].derived ? (Color){145, 218, 191, 255} : COLOR_TEXT);
+            EndScissorMode();
+        }
+    }
 }
 
 bool MouseOverPortInspector(GraphContext *graph, Vector2 mouse) {
@@ -534,8 +712,10 @@ void DrawToolbar(GraphContext *graph) {
     }
 
     if (graph->add_menu_open) {
-        const char *labels[] = {"Files", "Filter", "Exec", "HTTP Request"};
-        int label_count = 4;
+        const char *labels[] = {"Files", "Where", "Insert", "Get", "Exec", "HTTP Request"};
+        NodeType node_types[] = {NODE_DIRECTORY_LIST, NODE_STRING_FILTER, NODE_INSERT, NODE_GET,
+                                 NODE_EXEC,           NODE_HTTP_REQUEST};
+        int label_count = 6;
         Rectangle menu = {
             UiSize(graph, 12.0f),
             toolbar_height + UiSize(graph, 4.0f),
@@ -554,7 +734,7 @@ void DrawToolbar(GraphContext *graph) {
             if (GuiButton(button, labels[i])) {
                 Vector2 center = GetScreenToWorld2D((Vector2){GetScreenWidth() * 0.5f, GetScreenHeight() * 0.5f},
                                                     CanvasCamera(graph));
-                AddNode(graph, (NodeType)i, center);
+                AddNode(graph, node_types[i], center);
                 graph->add_menu_open = false;
             }
         }
