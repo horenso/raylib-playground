@@ -8,16 +8,18 @@
 #include "types.h"
 
 #include "raygui.h"
+
 #include <stdio.h>
 
 int main(int argc, char **argv) {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1280, 760, "Commander - visual dataflow shell");
+    SetExitKey(KEY_NULL);
     SetWindowMinSize(900, 560);
     SetTargetFPS(60);
 
     LoadInterfaceFonts();
-    GuiSetStyle(DEFAULT, TEXT_SIZE, GUI_TEXT_SIZE);
+    SetGuiScale(1.0f);
     GuiSetStyle(DEFAULT, BACKGROUND_COLOR, 0x191D25FF);
     GuiSetStyle(DEFAULT, BASE_COLOR_NORMAL, 0x303746FF);
     GuiSetStyle(DEFAULT, BASE_COLOR_FOCUSED, 0x3B465AFF);
@@ -28,6 +30,8 @@ int main(int argc, char **argv) {
     GuiSetStyle(TEXTBOX, TEXT_COLOR_PRESSED, 0xE1E6EFFF);
 
     static GraphContext graph = {0};
+    graph.application_scale = 1.0f;
+    graph.camera.offset = (Vector2){0, TOOLBAR_HEIGHT};
     graph.selected_node_id = -1;
     graph.active_port_id = -1;
     graph.dragging_node_id = -1;
@@ -39,7 +43,7 @@ int main(int argc, char **argv) {
             snprintf(graph.status, sizeof(graph.status), "Loaded: %s", argv[1]);
         } else {
             SeedGraph(&graph);
-            snprintf(graph.status, sizeof(graph.status), "Could not load %s — starting blank", argv[1]);
+            snprintf(graph.status, sizeof(graph.status), "Could not load %s - starting blank", argv[1]);
         }
     } else {
         SeedGraph(&graph);
@@ -47,6 +51,7 @@ int main(int argc, char **argv) {
 
     while (!WindowShouldClose()) {
         UpdateCanvas(&graph);
+        UpdateInterfaceFontScale(ApplicationScale(&graph), CanvasZoom(&graph));
 
         BeginDrawing();
         ClearBackground(COLOR_CANVAS);
@@ -57,13 +62,14 @@ int main(int argc, char **argv) {
             Port *to = FindPort(&graph, graph.links[i].to_port_id);
             if (from && to) {
                 DrawConnection(PortScreenPosition(&graph, from), PortScreenPosition(&graph, to),
-                               PortColor(from->data_type), 3.0f);
+                               PortColor(from->data_type), 3.0f * ApplicationScale(&graph));
             }
         }
         if (graph.active_port_id >= 0) {
             Port *port = FindPort(&graph, graph.active_port_id);
             if (port) {
-                DrawConnection(PortScreenPosition(&graph, port), GetMousePosition(), PortColor(port->data_type), 3.0f);
+                DrawConnection(PortScreenPosition(&graph, port), GetMousePosition(), PortColor(port->data_type),
+                               3.0f * ApplicationScale(&graph));
             }
         }
 
@@ -75,7 +81,7 @@ int main(int argc, char **argv) {
             DrawNodePorts(&graph, &graph.nodes[i]);
         }
         if (graph.knife_active) {
-            DrawKnife(graph.knife_start, GetMousePosition());
+            DrawKnife(graph.knife_start, GetMousePosition(), ApplicationScale(&graph));
         }
 
         // Draw pinned inspector or hover preview

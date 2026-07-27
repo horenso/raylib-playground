@@ -1,12 +1,14 @@
 #include "evaluate.h"
 #include "graph.h"
+
 #include "raylib.h"
+
 #include <ctype.h>
 #include <curl/curl.h>
 #include <regex.h>
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 typedef struct {
@@ -20,9 +22,13 @@ static size_t curl_write_cb(void *data, size_t size, size_t nmemb, void *userp) 
     CurlBuffer *b = userp;
     if (b->len + bytes + 1 > b->cap) {
         size_t new_cap = b->cap == 0 ? 65536 : b->cap * 2;
-        while (new_cap < b->len + bytes + 1) new_cap *= 2;
+        while (new_cap < b->len + bytes + 1) {
+            new_cap *= 2;
+        }
         char *tmp = realloc(b->buf, new_cap);
-        if (!tmp) return 0;
+        if (!tmp) {
+            return 0;
+        }
         b->buf = tmp;
         b->cap = new_cap;
     }
@@ -32,26 +38,53 @@ static size_t curl_write_cb(void *data, size_t size, size_t nmemb, void *userp) 
     return bytes;
 }
 
+static void AppendLine(Port *port, const char *line, size_t length) {
+    if (!port || port->item_count >= MAX_ITEMS) {
+        return;
+    }
+    while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == '\r')) {
+        length--;
+    }
+    size_t copy_length = length < MAX_PATH_LENGTH - 1 ? length : MAX_PATH_LENGTH - 1;
+    memcpy(port->items[port->item_count], line, copy_length);
+    port->items[port->item_count][copy_length] = '\0';
+    port->item_count++;
+}
+
+static void ReadLines(FILE *stream, Port *port) {
+    char line[MAX_PATH_LENGTH];
+    while (port && port->item_count < MAX_ITEMS && fgets(line, sizeof(line), stream)) {
+        AppendLine(port, line, strlen(line));
+    }
+}
+
 void EvaluateNode(GraphContext *graph, Node *node, int depth) {
     if (!node || !node->is_dirty || depth > MAX_NODES) {
         return;
     }
 
-    Node *source = InputSource(graph, node, 0);
+    Port *source_port = InputSourcePort(graph, node, 0);
+    Node *source = source_port ? FindNode(graph, source_port->node_id) : NULL;
     if (source) {
         EvaluateNode(graph, source, depth + 1);
     }
-    node->item_count = 0;
+    for (int i = 0; i < node->output_count; i++) {
+        Port *port = NodeOutputPort(graph, node, i);
+        if (port) {
+            port->item_count = 0;
+        }
+    }
+    Port *output = NodeOutputPort(graph, node, 0);
 
     if (node->type == NODE_DIRECTORY_LIST) {
         FilePathList files = LoadDirectoryFiles(node->parameter);
-        for (unsigned int i = 0; i < files.count && node->item_count < MAX_ITEMS; i++) {
+        for (unsigned int i = 0; output && i < files.count && output->item_count < MAX_ITEMS; i++) {
             if (!DirectoryExists(files.paths[i])) {
-                TextCopy(node->items[node->item_count++], files.paths[i]);
+                TextCopy(output->items[output->item_count++], files.paths[i]);
             }
         }
         UnloadDirectoryFiles(files);
-    } else if (source && node->type == NODE_STRING_FILTER) {
+    } else if (source_port && node->type == NODE_STRING_FILTER) {
         if (node->filter_use_regex) {
             int flags = REG_EXTENDED | REG_NOSUB;
             if (!node->filter_case_sensitive) {
@@ -65,16 +98,17 @@ void EvaluateNode(GraphContext *graph, Node *node, int depth) {
                 snprintf(graph->status, sizeof(graph->status), "Regex error: %s", error);
                 graph->evaluation_error = true;
             } else {
-                for (int i = 0; i < source->item_count && node->item_count < MAX_ITEMS; i++) {
-                    if (regexec(&expression, source->items[i], 0, NULL, 0) == 0) {
-                        TextCopy(node->items[node->item_count++], source->items[i]);
+                for (int i = 0; output && i < source_port->item_count && output->item_count < MAX_ITEMS; i++) {
+                    bool matched = regexec(&expression, source_port->items[i], 0, NULL, 0) == 0;
+                    if (matched != node->filter_exclude) {
+                        TextCopy(output->items[output->item_count++], source_port->items[i]);
                     }
                 }
                 regfree(&expression);
             }
         } else {
-            for (int i = 0; i < source->item_count && node->item_count < MAX_ITEMS; i++) {
-                const char *haystack = source->items[i];
+            for (int i = 0; output && i < source_port->item_count && output->item_count < MAX_ITEMS; i++) {
+                const char *haystack = source_port->items[i];
                 const char *needle = node->parameter;
                 bool matched = false;
                 // search for needle in haystack respecting case sensitivity
@@ -109,8 +143,8 @@ void EvaluateNode(GraphContext *graph, Node *node, int depth) {
                         }
                     }
                 }
-                if (matched) {
-                    TextCopy(node->items[node->item_count++], source->items[i]);
+                if (matched != node->filter_exclude) {
+                    TextCopy(output->items[output->item_count++], source_port->items[i]);
                 }
             }
         }
@@ -133,52 +167,70 @@ void EvaluateNode(GraphContext *graph, Node *node, int depth) {
             } else {
                 char *line = response.buf;
                 char *end = response.buf + response.len;
-                while (line < end && node->item_count < MAX_ITEMS) {
+                while (output && line < end && output->item_count < MAX_ITEMS) {
                     char *nl = memchr(line, '\n', (size_t)(end - line));
                     size_t line_len = nl ? (size_t)(nl - line) : (size_t)(end - line);
-                    if (line_len > 0 && line[line_len - 1] == '\r') line_len--;
-                    size_t copy_len = line_len < MAX_PATH_LENGTH - 1 ? line_len : MAX_PATH_LENGTH - 1;
-                    memcpy(node->items[node->item_count], line, copy_len);
-                    node->items[node->item_count][copy_len] = '\0';
-                    node->item_count++;
+                    AppendLine(output, line, line_len);
                     line = nl ? nl + 1 : end;
                 }
             }
             curl_easy_cleanup(curl);
         }
         free(response.buf);
-    } else if (source && node->type == NODE_BASH_EXEC && node->parameter[0] != '\0') {
+    } else if (node->type == NODE_EXEC && node->parameter[0] != '\0') {
+        Port *stderr_output = NodeOutputPort(graph, node, 1);
         // Write input items to a tmpfile and expose path as $ITEMS for the command
         char tmppath[] = "/tmp/cdr_items_XXXXXX";
         int fd = mkstemp(tmppath);
         if (fd >= 0) {
             FILE *tmp = fdopen(fd, "w");
             if (tmp) {
-                for (int i = 0; i < source->item_count; i++) {
-                    fprintf(tmp, "%s\n", source->items[i]);
+                for (int i = 0; source_port && i < source_port->item_count; i++) {
+                    fprintf(tmp, "%s\n", source_port->items[i]);
                 }
                 fclose(tmp);
             } else {
                 close(fd);
             }
         }
-        setenv("ITEMS", tmppath, 1);
-        FILE *proc = popen(node->parameter, "r");
-        if (!proc) {
-            snprintf(graph->status, sizeof(graph->status), "Bash error: failed to run command");
+
+        char stderr_path[] = "/tmp/cdr_stderr_XXXXXX";
+        int stderr_fd = mkstemp(stderr_path);
+        if (fd < 0 || stderr_fd < 0) {
+            if (stderr_fd >= 0) {
+                close(stderr_fd);
+                remove(stderr_path);
+            }
+            if (fd >= 0) {
+                remove(tmppath);
+            }
+            snprintf(graph->status, sizeof(graph->status), "Exec error: failed to create temporary files");
             graph->evaluation_error = true;
         } else {
-            char line[MAX_PATH_LENGTH];
-            while (fgets(line, sizeof(line), proc) && node->item_count < MAX_ITEMS) {
-                int len = (int)strlen(line);
-                if (len > 0 && line[len - 1] == '\n') {
-                    line[len - 1] = '\0';
-                }
-                TextCopy(node->items[node->item_count++], line);
+            close(stderr_fd);
+            setenv("ITEMS", tmppath, 1);
+            char command[512];
+            snprintf(command, sizeof(command), "(%s) 2> '%s'", node->parameter, stderr_path);
+            FILE *proc = popen(command, "r");
+            if (!proc) {
+                snprintf(graph->status, sizeof(graph->status), "Exec error: failed to run command");
+                graph->evaluation_error = true;
+            } else {
+                ReadLines(proc, output);
+                pclose(proc);
             }
-            pclose(proc);
+
+            FILE *errors = fopen(stderr_path, "r");
+            if (errors) {
+                ReadLines(errors, stderr_output);
+                fclose(errors);
+            } else {
+                snprintf(graph->status, sizeof(graph->status), "Exec error: failed to read stderr");
+                graph->evaluation_error = true;
+            }
+            remove(stderr_path);
+            remove(tmppath);
         }
-        remove(tmppath);
     }
     node->is_dirty = false;
 }
@@ -190,8 +242,10 @@ void RunGraph(GraphContext *graph) {
     }
     if (!graph->evaluation_error) {
         int total = 0;
-        for (int i = 0; i < graph->node_count; i++) {
-            total += graph->nodes[i].item_count;
+        for (int i = 0; i < graph->port_count; i++) {
+            if (graph->ports[i].direction == PORT_DIR_OUTPUT) {
+                total += graph->ports[i].item_count;
+            }
         }
         snprintf(graph->status, sizeof(graph->status), "Graph evaluated - %d item%s total", total,
                  total == 1 ? "" : "s");
@@ -200,6 +254,7 @@ void RunGraph(GraphContext *graph) {
 
 void SeedGraph(GraphContext *graph) {
     memset(graph, 0, sizeof(*graph));
+    graph->application_scale = 1.0f;
     graph->camera.offset = (Vector2){0, TOOLBAR_HEIGHT};
     graph->camera.target = (Vector2){-90, -55};
     graph->camera.zoom = 1.0f;
@@ -211,7 +266,7 @@ void SeedGraph(GraphContext *graph) {
     TextCopy(graph->status, "Ready - drag an output port to a compatible input port");
     Node *directory = AddNode(graph, NODE_DIRECTORY_LIST, (Vector2){70, 120});
     Node *match = AddNode(graph, NODE_STRING_FILTER, (Vector2){410, 120});
-    Node *bash = AddNode(graph, NODE_BASH_EXEC, (Vector2){750, 120});
+    Node *bash = AddNode(graph, NODE_EXEC, (Vector2){750, 120});
     if (directory && match && bash) {
         AddLink(graph, directory->output_port_ids[0], match->input_port_ids[0]);
         AddLink(graph, match->output_port_ids[0], bash->input_port_ids[0]);

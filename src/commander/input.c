@@ -1,14 +1,79 @@
 #include "input.h"
 #include "graph.h"
+#include "render.h"
+
 #include "raylib.h"
 #include "raymath.h"
-#include "render.h"
+
 #include <stdio.h>
 #include <string.h>
 
+static bool MouseOverNodeTextBox(GraphContext *graph, Vector2 mouse) {
+    float zoom = CanvasZoom(graph);
+    for (int i = graph->node_count - 1; i >= 0; i--) {
+        Node *node = &graph->nodes[i];
+        if (node->collapsed) {
+            continue;
+        }
+        Rectangle bounds = NodeScreenBounds(graph, node);
+        float text_box_y = node->type == NODE_DIRECTORY_LIST || node->type == NODE_HTTP_REQUEST ? 50.0f : 76.0f;
+        Rectangle text_box = {
+            bounds.x + 14 * zoom,
+            bounds.y + text_box_y * zoom,
+            bounds.width - 28 * zoom,
+            30 * zoom,
+        };
+        if (CheckCollisionPointRec(mouse, text_box)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool MouseOverDialogTextBox(GraphContext *graph, Vector2 mouse) {
+    if (!graph->open_dialog_open) {
+        return false;
+    }
+    float scale = ApplicationScale(graph);
+    Rectangle text_box = {100 * scale, ToolbarHeight(graph) + 8 * scale, 220 * scale, 28 * scale};
+    return CheckCollisionPointRec(mouse, text_box);
+}
+
+static void UpdateMouseCursor(GraphContext *graph, Vector2 mouse, bool panning) {
+    int cursor = MOUSE_CURSOR_DEFAULT;
+    if (panning) {
+        cursor = MOUSE_CURSOR_RESIZE_ALL;
+    } else if (MouseOverDialogTextBox(graph, mouse) ||
+               (!MouseOverPortInspector(graph, mouse) && MouseOverNodeTextBox(graph, mouse))) {
+        cursor = MOUSE_CURSOR_IBEAM;
+    }
+
+    static int current_cursor = -1;
+    if (cursor != current_cursor) {
+        SetMouseCursor(cursor);
+        current_cursor = cursor;
+    }
+}
+
 void UpdateCanvas(GraphContext *graph) {
+    bool control = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+    bool scale_up = IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD);
+    bool scale_down = IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT);
+    bool scale_reset = IsKeyPressed(KEY_ZERO) || IsKeyPressed(KEY_KP_0);
+    if (control && (scale_up || scale_down || scale_reset)) {
+        if (scale_reset) {
+            graph->application_scale = 1.0f;
+        } else {
+            float direction = scale_up ? 1.0f : -1.0f;
+            graph->application_scale = Clamp(graph->application_scale + direction * APPLICATION_SCALE_STEP,
+                                             APPLICATION_SCALE_MIN, APPLICATION_SCALE_MAX);
+        }
+        snprintf(graph->status, sizeof(graph->status), "Application scale %d%%",
+                 (int)(ApplicationScale(graph) * 100.0f + 0.5f));
+    }
+
     Vector2 mouse = GetMousePosition();
-    bool in_canvas = mouse.y > TOOLBAR_HEIGHT && mouse.y < GetScreenHeight() - STATUS_HEIGHT;
+    bool in_canvas = mouse.y > ToolbarHeight(graph) && mouse.y < GetScreenHeight() - StatusHeight(graph);
     bool panning =
         IsMouseButtonDown(MOUSE_BUTTON_MIDDLE) || (IsKeyDown(KEY_SPACE) && IsMouseButtonDown(MOUSE_BUTTON_LEFT));
 
@@ -19,14 +84,17 @@ void UpdateCanvas(GraphContext *graph) {
 
     if (in_canvas && panning) {
         Vector2 delta = GetMouseDelta();
-        graph->camera.target = Vector2Subtract(graph->camera.target, Vector2Scale(delta, 1.0f / graph->camera.zoom));
+        graph->camera.target = Vector2Subtract(graph->camera.target, Vector2Scale(delta, 1.0f / CanvasZoom(graph)));
     }
 
     float wheel = GetMouseWheelMove();
-    if (in_canvas && wheel != 0 && IsKeyDown(KEY_LEFT_CONTROL)) {
-        Vector2 before = GetScreenToWorld2D(mouse, graph->camera);
-        graph->camera.zoom = Clamp(graph->camera.zoom * (1.0f + wheel * 0.12f), 0.75f, 2.0f);
-        Vector2 after = GetScreenToWorld2D(mouse, graph->camera);
+    if (in_canvas && wheel != 0 && control) {
+        Camera2D camera = CanvasCamera(graph);
+        Vector2 before = GetScreenToWorld2D(mouse, camera);
+        float direction = wheel > 0.0f ? 1.0f : -1.0f;
+        graph->camera.zoom = Clamp(graph->camera.zoom + direction * NODE_ZOOM_STEP, NODE_ZOOM_MIN, NODE_ZOOM_MAX);
+        camera = CanvasCamera(graph);
+        Vector2 after = GetScreenToWorld2D(mouse, camera);
         graph->camera.target = Vector2Add(graph->camera.target, Vector2Subtract(before, after));
     }
 
@@ -48,8 +116,8 @@ void UpdateCanvas(GraphContext *graph) {
             graph->selected_node_id = node_id;
             graph->inspected_port_id = -1;
             Rectangle b = NodeScreenBounds(graph, node);
-            if (mouse.y <= b.y + NODE_HEADER_HEIGHT * graph->camera.zoom) {
-                Vector2 world_mouse = GetScreenToWorld2D(mouse, graph->camera);
+            if (mouse.y <= b.y + NODE_HEADER_HEIGHT * CanvasZoom(graph)) {
+                Vector2 world_mouse = GetScreenToWorld2D(mouse, CanvasCamera(graph));
                 graph->dragging_node_id = node_id;
                 graph->drag_offset = Vector2Subtract(world_mouse, (Vector2){node->bounds.x, node->bounds.y});
                 BringNodeToFront(graph, node_id);
@@ -78,7 +146,7 @@ void UpdateCanvas(GraphContext *graph) {
 
     if (graph->dragging_node_id >= 0 && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
         Node *node = FindNode(graph, graph->dragging_node_id);
-        Vector2 world_mouse = GetScreenToWorld2D(mouse, graph->camera);
+        Vector2 world_mouse = GetScreenToWorld2D(mouse, CanvasCamera(graph));
         if (node) {
             Vector2 position = Vector2Subtract(world_mouse, graph->drag_offset);
             node->bounds.x = position.x;
@@ -105,4 +173,6 @@ void UpdateCanvas(GraphContext *graph) {
             graph->active_port_id = -1;
         }
     }
+
+    UpdateMouseCursor(graph, mouse, panning);
 }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "config.h"
+
 #include "raylib.h"
 
 #define MAX_NODES 32
@@ -7,16 +9,6 @@
 #define MAX_LINKS 64
 #define MAX_ITEMS 256
 #define MAX_PATH_LENGTH 512
-
-#define TOOLBAR_HEIGHT 52.0f
-#define STATUS_HEIGHT 28.0f
-#define NODE_HEADER_HEIGHT 34.0f
-#define PORT_RADIUS 7.0f
-#define TITLE_TEXT_SIZE 18
-#define BODY_TEXT_SIZE 14
-#define PORT_TEXT_SIZE 14
-#define GUI_TEXT_SIZE 16
-#define NODE_DETAIL_MIN_ZOOM 0.70f
 
 typedef enum {
     PORT_TYPE_STRING,
@@ -31,7 +23,7 @@ typedef enum {
 typedef enum {
     NODE_DIRECTORY_LIST,
     NODE_STRING_FILTER,
-    NODE_BASH_EXEC,
+    NODE_EXEC,
     NODE_HTTP_REQUEST,
 } NodeType;
 
@@ -42,6 +34,8 @@ typedef struct {
     PortDataType data_type;
     PortDirection direction;
     Vector2 relative_pos;
+    char items[MAX_ITEMS][MAX_PATH_LENGTH];
+    int item_count;
 } Port;
 
 typedef struct {
@@ -65,8 +59,7 @@ typedef struct {
     bool filter_case_sensitive;
     bool filter_whole_word;
     bool filter_use_regex;
-    char items[MAX_ITEMS][MAX_PATH_LENGTH];
-    int item_count;
+    bool filter_exclude;
     int list_scroll;
     int list_active;
 } Node;
@@ -94,15 +87,22 @@ typedef struct {
     int inspected_port_id; // -1 = none; output port whose items are shown in the inspector panel
     int inspect_scroll;
     int inspect_active;
+    float application_scale;
 } GraphContext;
 
-static const Color COLOR_CANVAS = {18, 21, 28, 255};
-static const Color COLOR_GRID_MINOR = {31, 36, 46, 255};
-static const Color COLOR_GRID_MAJOR = {43, 49, 62, 255};
-static const Color COLOR_NODE = {35, 40, 51, 255};
-static const Color COLOR_NODE_HEADER = {47, 54, 68, 255};
-static const Color COLOR_NODE_SELECTED = {92, 170, 255, 255};
-static const Color COLOR_STRING = {242, 178, 74, 255};
-static const Color COLOR_STRING_LIST = {91, 207, 151, 255};
-static const Color COLOR_TEXT = {225, 230, 239, 255};
-static const Color COLOR_MUTED = {142, 151, 168, 255};
+static inline float ApplicationScale(const GraphContext *graph) {
+    return graph->application_scale > 0.0f ? graph->application_scale : 1.0f;
+}
+
+static inline float ToolbarHeight(const GraphContext *graph) { return TOOLBAR_HEIGHT * ApplicationScale(graph); }
+
+static inline float StatusHeight(const GraphContext *graph) { return STATUS_HEIGHT * ApplicationScale(graph); }
+
+static inline float CanvasZoom(const GraphContext *graph) { return graph->camera.zoom * ApplicationScale(graph); }
+
+static inline Camera2D CanvasCamera(const GraphContext *graph) {
+    Camera2D camera = graph->camera;
+    camera.offset.y = ToolbarHeight(graph);
+    camera.zoom = CanvasZoom(graph);
+    return camera;
+}

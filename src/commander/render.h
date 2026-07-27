@@ -4,7 +4,7 @@
 
 void DrawCanvasGrid(GraphContext *graph);
 void DrawConnection(Vector2 from, Vector2 to, Color color, float thickness);
-void DrawKnife(Vector2 start, Vector2 end);
+void DrawKnife(Vector2 start, Vector2 end, float scale);
 void DrawNodeShell(GraphContext *graph, Node *node);
 void DrawNodePorts(GraphContext *graph, Node *node);
 void DrawNodeContent(GraphContext *graph, Node *node);

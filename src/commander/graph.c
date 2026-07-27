@@ -1,6 +1,9 @@
 #include "graph.h"
+#include "config.h"
+
 #include "raylib.h"
 #include "raymath.h"
+
 #include <math.h>
 #include <string.h>
 
@@ -35,13 +38,12 @@ int AddPort(GraphContext *graph, Node *node, const char *name, PortDataType type
         }
     }
     Port *port = &graph->ports[graph->port_count++];
-    *port = (Port){
-        .id = id,
-        .node_id = node->id,
-        .data_type = type,
-        .direction = direction,
-        .relative_pos = {direction == PORT_DIR_INPUT ? 0.0f : node->bounds.width, y},
-    };
+    memset(port, 0, sizeof(*port));
+    port->id = id;
+    port->node_id = node->id;
+    port->data_type = type;
+    port->direction = direction;
+    port->relative_pos = (Vector2){direction == PORT_DIR_INPUT ? 0.0f : node->bounds.width, y};
     TextCopy(port->name, name);
     if (direction == PORT_DIR_INPUT) {
         node->input_port_ids[node->input_count++] = port->id;
@@ -72,7 +74,7 @@ Node *AddNode(GraphContext *graph, NodeType type, Vector2 position) {
 
     switch (type) {
     case NODE_DIRECTORY_LIST:
-        TextCopy(node->title, "Directory List");
+        TextCopy(node->title, "Files");
         TextCopy(node->parameter, ".");
         AddPort(graph, node, "Files", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 112);
         break;
@@ -84,12 +86,14 @@ Node *AddNode(GraphContext *graph, NodeType type, Vector2 position) {
         AddPort(graph, node, "Files", PORT_TYPE_STRING_LIST, PORT_DIR_INPUT, 55);
         AddPort(graph, node, "Matches", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 178);
         break;
-    case NODE_BASH_EXEC:
-        TextCopy(node->title, "Bash Exec");
+    case NODE_EXEC:
+        TextCopy(node->title, "Exec");
         TextCopy(node->parameter, "sort");
+        node->bounds.width = 320;
         node->bounds.height = 180;
         AddPort(graph, node, "Stdin", PORT_TYPE_STRING_LIST, PORT_DIR_INPUT, 55);
         AddPort(graph, node, "Stdout", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 148);
+        AddPort(graph, node, "Stderr", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 148);
         break;
     case NODE_HTTP_REQUEST:
         TextCopy(node->title, "HTTP Request");
@@ -209,18 +213,24 @@ void MarkDownstreamDirty(GraphContext *graph, int node_id) {
     }
 }
 
-Node *InputSource(GraphContext *graph, Node *node, int input_index) {
-    if (input_index >= node->input_count) {
+Port *InputSourcePort(GraphContext *graph, Node *node, int input_index) {
+    if (input_index < 0 || input_index >= node->input_count) {
         return NULL;
     }
     int input_id = node->input_port_ids[input_index];
     for (int i = 0; i < graph->link_count; i++) {
         if (graph->links[i].to_port_id == input_id) {
-            Port *source = FindPort(graph, graph->links[i].from_port_id);
-            return source ? FindNode(graph, source->node_id) : NULL;
+            return FindPort(graph, graph->links[i].from_port_id);
         }
     }
     return NULL;
+}
+
+Port *NodeOutputPort(GraphContext *graph, Node *node, int output_index) {
+    if (!node || output_index < 0 || output_index >= node->output_count) {
+        return NULL;
+    }
+    return FindPort(graph, node->output_port_ids[output_index]);
 }
 
 void BringNodeToFront(GraphContext *graph, int id) {
@@ -243,24 +253,35 @@ Vector2 PortScreenPosition(GraphContext *graph, Port *port) {
     Node *node = FindNode(graph, port->node_id);
     if (node) {
         Rectangle b = NodeScreenBounds(graph, node);
-        float mid_y = b.y + NODE_HEADER_HEIGHT * graph->camera.zoom * 0.5f;
+        float zoom = CanvasZoom(graph);
+        int count = port->direction == PORT_DIR_INPUT ? node->input_count : node->output_count;
+        int *ids = port->direction == PORT_DIR_INPUT ? node->input_port_ids : node->output_port_ids;
+        int index = 0;
+        while (index < count && ids[index] != port->id) {
+            index++;
+        }
+        float header_height = NODE_HEADER_HEIGHT * zoom;
+        float margin = PORT_RADIUS * zoom;
+        float y = count <= 1 ? b.y + header_height * 0.5f
+                             : b.y + margin + (header_height - margin * 2.0f) * (float)index / (float)(count - 1);
         float x = port->direction == PORT_DIR_INPUT ? b.x : b.x + b.width;
-        return (Vector2){x, mid_y};
+        return (Vector2){x, y};
     }
-    return GetWorldToScreen2D(PortWorldPosition(graph, port), graph->camera);
+    return GetWorldToScreen2D(PortWorldPosition(graph, port), CanvasCamera(graph));
 }
 
 Rectangle NodeScreenBounds(GraphContext *graph, Node *node) {
-    Vector2 top_left = GetWorldToScreen2D((Vector2){node->bounds.x, node->bounds.y}, graph->camera);
+    float zoom = CanvasZoom(graph);
+    Vector2 top_left = GetWorldToScreen2D((Vector2){node->bounds.x, node->bounds.y}, CanvasCamera(graph));
     float h = node->collapsed ? NODE_HEADER_HEIGHT : node->bounds.height;
-    return (Rectangle){top_left.x, top_left.y, node->bounds.width * graph->camera.zoom, h * graph->camera.zoom};
+    return (Rectangle){top_left.x, top_left.y, node->bounds.width * zoom, h * zoom};
 }
 
 int PortAtMouse(GraphContext *graph, Vector2 mouse, PortDirection direction) {
     for (int i = graph->port_count - 1; i >= 0; i--) {
         Port *port = &graph->ports[i];
-        if (port->direction == direction &&
-            CheckCollisionPointCircle(mouse, PortScreenPosition(graph, port), PORT_RADIUS + 5)) {
+        if (port->direction == direction && CheckCollisionPointCircle(mouse, PortScreenPosition(graph, port),
+                                                                      (PORT_RADIUS + 5.0f) * CanvasZoom(graph))) {
             return port->id;
         }
     }

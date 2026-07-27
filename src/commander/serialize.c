@@ -1,11 +1,13 @@
 #include "serialize.h"
 #include "graph.h"
+
 #include <stdio.h>
 #include <string.h>
 
 // File format (text):
 //   camera <zoom> <target_x> <target_y>
 //   node <id> <type> <x> <y> <w> <h> <collapsed> <parameter_escaped> <case_sensitive> <whole_word> <use_regex>
+//        <title_escaped> <exclude>
 //   port <id> <node_id> <name> <data_type> <direction> <rel_x> <rel_y>
 //   link <from_port_id> <to_port_id>
 //   eof
@@ -65,9 +67,9 @@ bool SaveGraph(GraphContext *graph, const char *path) {
         escape(n->parameter, esc, sizeof(esc));
         char title_esc[128];
         escape(n->title, title_esc, sizeof(title_esc));
-        fprintf(f, "node %d %d %f %f %f %f %d %s %d %d %d %s\n", n->id, (int)n->type, n->bounds.x, n->bounds.y,
+        fprintf(f, "node %d %d %f %f %f %f %d %s %d %d %d %s %d\n", n->id, (int)n->type, n->bounds.x, n->bounds.y,
                 n->bounds.width, n->bounds.height, (int)n->collapsed, esc, (int)n->filter_case_sensitive,
-                (int)n->filter_whole_word, (int)n->filter_use_regex, title_esc);
+                (int)n->filter_whole_word, (int)n->filter_use_regex, title_esc, (int)n->filter_exclude);
     }
 
     for (int i = 0; i < graph->port_count; i++) {
@@ -126,16 +128,17 @@ bool LoadGraph(GraphContext *graph, const char *path) {
             Node *n = &graph->nodes[graph->node_count++];
             memset(n, 0, sizeof(*n));
             n->list_active = -1;
-            int type, collapsed, cs, ww, re;
+            int type, collapsed, cs, ww, re, exclude = 0;
             char esc_param[512] = {0};
             char esc_title[128] = {0};
-            sscanf(line, "node %d %d %f %f %f %f %d %511s %d %d %d %127s", &n->id, &type, &n->bounds.x, &n->bounds.y,
-                   &n->bounds.width, &n->bounds.height, &collapsed, esc_param, &cs, &ww, &re, esc_title);
+            sscanf(line, "node %d %d %f %f %f %f %d %511s %d %d %d %127s %d", &n->id, &type, &n->bounds.x, &n->bounds.y,
+                   &n->bounds.width, &n->bounds.height, &collapsed, esc_param, &cs, &ww, &re, esc_title, &exclude);
             n->type = (NodeType)type;
             n->collapsed = (bool)collapsed;
             n->filter_case_sensitive = (bool)cs;
             n->filter_whole_word = (bool)ww;
             n->filter_use_regex = (bool)re;
+            n->filter_exclude = (bool)exclude;
             n->is_dirty = true;
             unescape(esc_param, n->parameter, sizeof(n->parameter));
             unescape(esc_title, n->title, sizeof(n->title));
@@ -175,6 +178,31 @@ bool LoadGraph(GraphContext *graph, const char *path) {
             }
             Link *l = &graph->links[graph->link_count++];
             sscanf(line, "link %d %d", &l->from_port_id, &l->to_port_id);
+        }
+    }
+
+    // Older graphs have only the Exec stdout port. Upgrade them in memory so
+    // loading an existing graph exposes stderr without changing the file format.
+    for (int i = 0; i < graph->node_count; i++) {
+        Node *node = &graph->nodes[i];
+        if (node->type != NODE_EXEC) {
+            continue;
+        }
+        if (node->bounds.width < 320.0f) {
+            node->bounds.width = 320.0f;
+        }
+        bool has_stderr = false;
+        for (int output_index = 0; output_index < node->output_count; output_index++) {
+            Port *port = FindPort(graph, node->output_port_ids[output_index]);
+            if (port) {
+                port->relative_pos.x = node->bounds.width;
+                if (TextIsEqual(port->name, "Stderr")) {
+                    has_stderr = true;
+                }
+            }
+        }
+        if (!has_stderr) {
+            AddPort(graph, node, "Stderr", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 148);
         }
     }
 
