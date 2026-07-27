@@ -30,8 +30,9 @@ typedef enum {
 
 typedef enum {
     NODE_DIRECTORY_LIST,
-    NODE_STRING_MATCH,
-    NODE_INSPECT_VIEW,
+    NODE_STRING_FILTER,
+    NODE_BASH_EXEC,
+    NODE_HTTP_REQUEST,
 } NodeType;
 
 typedef struct {
@@ -59,7 +60,11 @@ typedef struct {
     int output_count;
     bool is_dirty;
     bool text_editing;
+    bool collapsed;
     char parameter[128];
+    bool filter_case_sensitive;
+    bool filter_whole_word;
+    bool filter_use_regex;
     char items[MAX_ITEMS][MAX_PATH_LENGTH];
     int item_count;
     int list_scroll;
@@ -83,6 +88,9 @@ typedef struct {
     bool add_menu_open;
     bool evaluation_error;
     char status[160];
+    int inspected_port_id; // -1 = none; output port whose items are shown in the inspector panel
+    int inspect_scroll;
+    int inspect_active;
 } GraphContext;
 
 static const Color COLOR_CANVAS = {18, 21, 28, 255};

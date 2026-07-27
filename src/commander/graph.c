@@ -76,18 +76,26 @@ Node *AddNode(GraphContext *graph, NodeType type, Vector2 position) {
         TextCopy(node->parameter, ".");
         AddPort(graph, node, "Files", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 112);
         break;
-    case NODE_STRING_MATCH:
-        TextCopy(node->title, "Regex Match");
+    case NODE_STRING_FILTER:
+        TextCopy(node->title, "Filter");
         TextCopy(node->parameter, "\\.c$");
-        node->bounds.height = 180;
+        node->filter_use_regex = true;
+        node->bounds.height = 210;
         AddPort(graph, node, "Files", PORT_TYPE_STRING_LIST, PORT_DIR_INPUT, 55);
-        AddPort(graph, node, "Matches", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 148);
+        AddPort(graph, node, "Matches", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 178);
         break;
-    case NODE_INSPECT_VIEW:
-        TextCopy(node->title, "Inspect");
-        node->bounds.width = 330;
-        node->bounds.height = 265;
-        AddPort(graph, node, "Items", PORT_TYPE_STRING_LIST, PORT_DIR_INPUT, 55);
+    case NODE_BASH_EXEC:
+        TextCopy(node->title, "Bash Exec");
+        TextCopy(node->parameter, "sort");
+        node->bounds.height = 180;
+        AddPort(graph, node, "Stdin", PORT_TYPE_STRING_LIST, PORT_DIR_INPUT, 55);
+        AddPort(graph, node, "Stdout", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 148);
+        break;
+    case NODE_HTTP_REQUEST:
+        TextCopy(node->title, "HTTP Request");
+        TextCopy(node->parameter, "https://");
+        node->bounds.height = 148;
+        AddPort(graph, node, "Lines", PORT_TYPE_STRING_LIST, PORT_DIR_OUTPUT, 112);
         break;
     }
     return node;
@@ -232,13 +240,20 @@ Vector2 PortWorldPosition(GraphContext *graph, Port *port) {
 }
 
 Vector2 PortScreenPosition(GraphContext *graph, Port *port) {
+    Node *node = FindNode(graph, port->node_id);
+    if (node) {
+        Rectangle b = NodeScreenBounds(graph, node);
+        float mid_y = b.y + NODE_HEADER_HEIGHT * graph->camera.zoom * 0.5f;
+        float x = port->direction == PORT_DIR_INPUT ? b.x : b.x + b.width;
+        return (Vector2){x, mid_y};
+    }
     return GetWorldToScreen2D(PortWorldPosition(graph, port), graph->camera);
 }
 
 Rectangle NodeScreenBounds(GraphContext *graph, Node *node) {
     Vector2 top_left = GetWorldToScreen2D((Vector2){node->bounds.x, node->bounds.y}, graph->camera);
-    return (Rectangle){top_left.x, top_left.y, node->bounds.width * graph->camera.zoom,
-                       node->bounds.height * graph->camera.zoom};
+    float h = node->collapsed ? NODE_HEADER_HEIGHT : node->bounds.height;
+    return (Rectangle){top_left.x, top_left.y, node->bounds.width * graph->camera.zoom, h * graph->camera.zoom};
 }
 
 int PortAtMouse(GraphContext *graph, Vector2 mouse, PortDirection direction) {

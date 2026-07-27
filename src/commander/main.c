@@ -61,6 +61,14 @@ int main(void) {
             DrawKnife(graph.knife_start, GetMousePosition());
         }
 
+        // Draw pinned inspector or hover preview
+        int hovered_output = PortAtMouse(&graph, GetMousePosition(), PORT_DIR_OUTPUT);
+        if (graph.inspected_port_id >= 0) {
+            DrawPortInspector(&graph, graph.inspected_port_id, true);
+        } else if (hovered_output >= 0 && graph.active_port_id < 0) {
+            DrawPortInspector(&graph, hovered_output, false);
+        }
+
         DrawToolbar(&graph);
         DrawStatusBar(&graph);
         EndDrawing();

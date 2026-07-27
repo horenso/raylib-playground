@@ -23,7 +23,7 @@ void UpdateCanvas(GraphContext *graph) {
     }
 
     float wheel = GetMouseWheelMove();
-    if (in_canvas && wheel != 0) {
+    if (in_canvas && wheel != 0 && IsKeyDown(KEY_LEFT_CONTROL)) {
         Vector2 before = GetScreenToWorld2D(mouse, graph->camera);
         graph->camera.zoom = Clamp(graph->camera.zoom * (1.0f + wheel * 0.12f), 0.75f, 2.0f);
         Vector2 after = GetScreenToWorld2D(mouse, graph->camera);
@@ -42,8 +42,11 @@ void UpdateCanvas(GraphContext *graph) {
             if (graph->active_port_id >= 0) {
                 TextCopy(graph->status, "Link detached - drop it on an input to reconnect");
             }
-        } else if (node && !MouseOverNodeControl(graph, node, mouse)) {
+        } else if (MouseOverPortInspector(graph, mouse)) {
+            // clicks inside the pinned inspector panel: let raygui handle scrolling/selection
+        } else if (node && !MouseOverNodeControl(graph, node, mouse) && !MouseOverCollapseButton(graph, node, mouse)) {
             graph->selected_node_id = node_id;
+            graph->inspected_port_id = -1;
             Rectangle b = NodeScreenBounds(graph, node);
             if (mouse.y <= b.y + NODE_HEADER_HEIGHT * graph->camera.zoom) {
                 Vector2 world_mouse = GetScreenToWorld2D(mouse, graph->camera);
@@ -53,6 +56,7 @@ void UpdateCanvas(GraphContext *graph) {
             }
         } else if (!node) {
             graph->selected_node_id = -1;
+            graph->inspected_port_id = -1;
         }
     }
 
@@ -88,6 +92,15 @@ void UpdateCanvas(GraphContext *graph) {
             int input = PortAtMouse(graph, mouse, PORT_DIR_INPUT);
             if (input >= 0 && AddLink(graph, graph->active_port_id, input)) {
                 TextCopy(graph->status, "Connected - run graph to refresh downstream nodes");
+            } else if (PortAtMouse(graph, mouse, PORT_DIR_OUTPUT) == graph->active_port_id) {
+                // Released on the same output port with no link made: toggle pin
+                if (graph->inspected_port_id == graph->active_port_id) {
+                    graph->inspected_port_id = -1;
+                } else {
+                    graph->inspected_port_id = graph->active_port_id;
+                    graph->inspect_scroll = 0;
+                    graph->inspect_active = -1;
+                }
             }
             graph->active_port_id = -1;
         }
