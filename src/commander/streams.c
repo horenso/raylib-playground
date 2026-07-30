@@ -10,26 +10,26 @@ const char *ValueTypeName(ValueType type) {
     switch (type) {
     case VALUE_STRING:
         return "String";
-    case VALUE_PATH:
-        return "Path";
     case VALUE_BOOL:
         return "Bool";
     case VALUE_INT:
         return "Int";
-    case VALUE_FILE_SIZE:
-        return "FileSize";
+    case VALUE_SIZE:
+        return "Size";
     case VALUE_DATETIME:
         return "DateTime";
-    case VALUE_FILE_KIND:
-        return "FileKind";
     case VALUE_RECORD:
-        return "Rows";
+        return "Record";
     default:
         return "Unresolved";
     }
 }
 
-bool ValueTypeIsText(ValueType type) { return type == VALUE_STRING || type == VALUE_PATH || type == VALUE_FILE_KIND; }
+bool ValueTypeIsText(ValueType type) { return type == VALUE_STRING; }
+
+bool ValueTypeIsNumeric(ValueType type) {
+    return type == VALUE_INT || type == VALUE_SIZE || type == VALUE_DATETIME;
+}
 
 int SchemaFieldIndex(const RecordSchema *schema, const char *name) {
     if (!schema || !name || !name[0]) {
@@ -80,15 +80,13 @@ const char *ValueDisplayText(const StreamValue *value, char *buffer, int buffer_
     }
     switch (value->type) {
     case VALUE_STRING:
-    case VALUE_PATH:
-    case VALUE_FILE_KIND:
         return value->as.text;
     case VALUE_BOOL:
         return value->as.boolean ? "true" : "false";
     case VALUE_INT:
         snprintf(buffer, (size_t)buffer_size, "%lld", value->as.integer);
         return buffer;
-    case VALUE_FILE_SIZE: {
+    case VALUE_SIZE: {
         double size = (double)value->as.file_size;
         const char *unit = "B";
         if (size >= 1024.0 * 1024.0 * 1024.0) {

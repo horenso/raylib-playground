@@ -80,10 +80,10 @@ static void AppendFileRecord(Node *node, Port *output, const char *path) {
 
     StreamItem *item = &output->items[output->item_count++];
     memset(item, 0, sizeof(*item));
-    SetTextValue(&item->values[0], VALUE_PATH, path);
+    SetTextValue(&item->values[0], VALUE_STRING, path);
     SetTextValue(&item->values[1], VALUE_STRING, GetFileName(path));
-    SetTextValue(&item->values[2], VALUE_FILE_KIND, is_folder ? "folder" : "file");
-    item->values[3].type = VALUE_FILE_SIZE;
+    SetTextValue(&item->values[2], VALUE_STRING, is_folder ? "folder" : "file");
+    item->values[3].type = VALUE_SIZE;
     item->values[3].as.file_size = is_folder ? 0 : (unsigned long long)info.st_size;
     item->values[4].type = VALUE_DATETIME;
     item->values[4].as.datetime = (long long)info.st_mtime;
@@ -165,6 +165,41 @@ static bool EvaluateWhere(GraphContext *graph, Node *node, Port *source, Port *o
     return true;
 }
 
+static long long NumericValue(const StreamValue *value) {
+    if (!value) return 0;
+    if (value->type == VALUE_INT || value->type == VALUE_DATETIME) return value->as.integer;
+    if (value->type == VALUE_SIZE) return (long long)value->as.file_size;
+    return 0;
+}
+
+static bool EvaluateNumberFilter(GraphContext *graph, Node *node, Port *source, Port *output) {
+    char *end;
+    long long threshold = strtoll(node->parameter, &end, 10);
+    if (*node->parameter == '\0' || *end != '\0') {
+        snprintf(graph->status, sizeof(graph->status), "Match Number: invalid threshold '%s'", node->parameter);
+        graph->evaluation_error = true;
+        return false;
+    }
+    for (int i = 0; output && i < source->item_count && output->item_count < MAX_ITEMS; i++) {
+        const StreamValue *value = ItemFieldValue(source, &source->items[i], node->field_name);
+        if (!value || !ValueTypeIsNumeric(value->type)) continue;
+        long long v = NumericValue(value);
+        bool matched = false;
+        switch (node->number_filter_op) {
+        case NUMBER_FILTER_EQ:  matched = v == threshold; break;
+        case NUMBER_FILTER_NEQ: matched = v != threshold; break;
+        case NUMBER_FILTER_LT:  matched = v <  threshold; break;
+        case NUMBER_FILTER_LTE: matched = v <= threshold; break;
+        case NUMBER_FILTER_GT:  matched = v >  threshold; break;
+        case NUMBER_FILTER_GTE: matched = v >= threshold; break;
+        }
+        if (matched != node->filter_exclude) {
+            output->items[output->item_count++] = source->items[i];
+        }
+    }
+    return true;
+}
+
 static void ReplaceAll(const char *input, const char *find, const char *replacement, char *output, size_t output_size) {
     size_t used = 0;
     size_t find_length = strlen(find);
@@ -204,7 +239,7 @@ static void TransformInsertedValue(const Node *node, const StreamValue *source, 
     char transformed[MAX_PATH_LENGTH] = {0};
     if (node->insert_operation == INSERT_REPLACE_TEXT) {
         ReplaceAll(source->as.text, node->parameter, node->secondary_parameter, transformed, sizeof(transformed));
-    } else if (node->insert_operation == INSERT_REPLACE_FILENAME && source->type == VALUE_PATH) {
+    } else if (node->insert_operation == INSERT_REPLACE_FILENAME && source->type == VALUE_STRING) {
         const char *filename = GetFileName(source->as.text);
         char new_filename[MAX_PATH_LENGTH] = {0};
         ReplaceAll(filename, node->parameter, node->secondary_parameter, new_filename, sizeof(new_filename));
@@ -220,7 +255,7 @@ static void TransformInsertedValue(const Node *node, const StreamValue *source, 
         } else {
             TextCopy(transformed, new_filename);
         }
-    } else if (node->insert_operation == INSERT_REPLACE_EXTENSION && source->type == VALUE_PATH) {
+    } else if (node->insert_operation == INSERT_REPLACE_EXTENSION && source->type == VALUE_STRING) {
         char base[MAX_PATH_LENGTH] = {0};
         TextCopy(base, source->as.text);
         char *slash = strrchr(base, '/');
@@ -324,8 +359,10 @@ bool EvaluateNode(GraphContext *graph, Node *node, int depth) {
             AppendDirectoryEntries(node, output, entries);
             UnloadDirectoryFiles(entries);
         }
-    } else if (node->type == NODE_STRING_FILTER) {
+    } else if (node->type == NODE_MATCH_STRING) {
         success = EvaluateWhere(graph, node, source_port, output);
+    } else if (node->type == NODE_NUMBER_FILTER) {
+        success = EvaluateNumberFilter(graph, node, source_port, output);
     } else if (node->type == NODE_INSERT) {
         success = EvaluateInsert(node, source_port, output);
     } else if (node->type == NODE_GET) {
@@ -468,12 +505,14 @@ void SeedGraph(GraphContext *graph) {
     graph->selected_node_id = -1;
     graph->active_port_id = -1;
     graph->dragging_node_id = -1;
-    graph->inspected_port_id = -1;
-    graph->inspect_active = -1;
+    for (int i = 0; i < MAX_INSPECTOR_WINDOWS; i++) {
+        graph->inspector_windows[i].port_id = -1;
+        graph->inspector_windows[i].active = -1;
+    }
     TextCopy(graph->status, "Ready - Files now emits typed rows; inspect an output to see its schema");
 
     Node *files = AddNode(graph, NODE_DIRECTORY_LIST, (Vector2){45, 110});
-    Node *where = AddNode(graph, NODE_STRING_FILTER, (Vector2){360, 110});
+    Node *where = AddNode(graph, NODE_MATCH_STRING, (Vector2){360, 110});
     Node *insert = AddNode(graph, NODE_INSERT, (Vector2){675, 110});
     if (files && where && insert) {
         AddLink(graph, files->output_port_ids[0], where->input_port_ids[0]);

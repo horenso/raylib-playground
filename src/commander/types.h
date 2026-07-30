@@ -11,16 +11,33 @@
 #define MAX_PATH_LENGTH 512
 #define MAX_FIELDS 8
 #define MAX_FIELD_NAME 32
+#define MAX_INSPECTOR_WINDOWS 8
+
+typedef struct {
+    int port_id;        // -1 = slot is empty
+    Vector2 pos;        // top-left screen position (absolute, user-dragged)
+    Vector2 size;       // (0,0) = use default; set once user resizes
+    int scroll;
+    int active;
+    bool dragging;
+    Vector2 drag_offset; // mouse-to-panel-origin delta at drag start
+    bool resizing;
+    Vector2 resize_start_mouse;
+    Vector2 resize_start_size;
+    bool scrollbar_dragging;
+    float scrollbar_drag_start_y;
+    int scrollbar_drag_start_scroll;
+    int sort_field;     // -1 = no sort
+    bool sort_asc;
+} InspectorWindow;
 
 typedef enum {
     VALUE_NONE,
     VALUE_STRING,
-    VALUE_PATH,
     VALUE_BOOL,
     VALUE_INT,
-    VALUE_FILE_SIZE,
+    VALUE_SIZE,
     VALUE_DATETIME,
-    VALUE_FILE_KIND,
     VALUE_RECORD,
 } ValueType;
 
@@ -63,12 +80,22 @@ typedef enum {
 
 typedef enum {
     NODE_DIRECTORY_LIST,
-    NODE_STRING_FILTER,
+    NODE_MATCH_STRING,
     NODE_EXEC,
     NODE_HTTP_REQUEST,
     NODE_INSERT,
     NODE_GET,
+    NODE_NUMBER_FILTER,
 } NodeType;
+
+typedef enum {
+    NUMBER_FILTER_EQ,
+    NUMBER_FILTER_NEQ,
+    NUMBER_FILTER_LT,
+    NUMBER_FILTER_LTE,
+    NUMBER_FILTER_GT,
+    NUMBER_FILTER_GTE,
+} NumberFilterOp;
 
 typedef enum {
     INSERT_REPLACE_TEXT,
@@ -135,6 +162,7 @@ typedef struct {
     bool filter_whole_word;
     bool filter_use_regex;
     bool filter_exclude;
+    NumberFilterOp number_filter_op;
     int list_scroll;
     int list_active;
 } Node;
@@ -154,14 +182,13 @@ typedef struct {
     bool knife_active;
     Vector2 knife_start;
     bool add_menu_open;
+    Vector2 add_menu_pos;  // screen position where the context menu was invoked
     bool open_dialog_open;
     char open_dialog_path[MAX_PATH_LENGTH];
     char current_file[MAX_PATH_LENGTH];
     bool evaluation_error;
     char status[160];
-    int inspected_port_id; // -1 = none; output port whose items are shown in the inspector panel
-    int inspect_scroll;
-    int inspect_active;
+    InspectorWindow inspector_windows[MAX_INSPECTOR_WINDOWS];
     float application_scale;
     InteractionMode interaction_mode;
 } GraphContext;
@@ -189,4 +216,41 @@ static inline Camera2D CanvasCamera(const GraphContext *graph) {
     camera.offset.y = ToolbarHeight(graph);
     camera.zoom = CanvasUnit(graph);
     return camera;
+}
+
+static inline InspectorWindow *FindInspectorWindow(GraphContext *graph, int port_id) {
+    for (int i = 0; i < MAX_INSPECTOR_WINDOWS; i++) {
+        if (graph->inspector_windows[i].port_id == port_id) {
+            return &graph->inspector_windows[i];
+        }
+    }
+    return (InspectorWindow *)0;
+}
+
+static inline InspectorWindow *OpenInspectorWindow(GraphContext *graph, int port_id, Vector2 pos) {
+    InspectorWindow *existing = FindInspectorWindow(graph, port_id);
+    if (existing) {
+        return existing;
+    }
+    for (int i = 0; i < MAX_INSPECTOR_WINDOWS; i++) {
+        if (graph->inspector_windows[i].port_id <= 0) {
+            graph->inspector_windows[i] = (InspectorWindow){
+                .port_id = port_id,
+                .pos = pos,
+                .size = {0, 0},
+                .scroll = 0,
+                .active = -1,
+                .sort_field = -1,
+                .sort_asc = true,
+            };
+            return &graph->inspector_windows[i];
+        }
+    }
+    return (InspectorWindow *)0;
+}
+
+static inline void CloseInspectorWindow(InspectorWindow *win) {
+    if (win) {
+        win->port_id = -1;
+    }
 }

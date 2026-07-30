@@ -30,9 +30,7 @@ Color PortColor(PortDataType type) {
     switch (type) {
     case VALUE_RECORD:
         return (Color){102, 198, 160, 255};
-    case VALUE_PATH:
-        return (Color){224, 174, 92, 255};
-    case VALUE_FILE_SIZE:
+    case VALUE_SIZE:
     case VALUE_INT:
         return (Color){180, 132, 230, 255};
     default:
@@ -124,15 +122,15 @@ Node *AddNode(GraphContext *graph, NodeType type, Vector2 position) {
         AddPort(graph, node, "Rows", VALUE_RECORD, PORT_DIR_OUTPUT, 112);
         Port *files = NodeOutputPort(graph, node, 0);
         if (files) {
-            SchemaAddField(&files->schema, "path", VALUE_PATH, false);
+            SchemaAddField(&files->schema, "path", VALUE_STRING, false);
             SchemaAddField(&files->schema, "name", VALUE_STRING, false);
-            SchemaAddField(&files->schema, "type", VALUE_FILE_KIND, false);
-            SchemaAddField(&files->schema, "size", VALUE_FILE_SIZE, false);
+            SchemaAddField(&files->schema, "type", VALUE_STRING, false);
+            SchemaAddField(&files->schema, "size", VALUE_SIZE, false);
             SchemaAddField(&files->schema, "modified", VALUE_DATETIME, false);
         }
         break;
-    case NODE_STRING_FILTER:
-        TextCopy(node->title, "Where");
+    case NODE_MATCH_STRING:
+        TextCopy(node->title, "Match String");
         TextCopy(node->parameter, "\\.c$");
         node->filter_use_regex = true;
         node->bounds.height = 220;
@@ -170,6 +168,14 @@ Node *AddNode(GraphContext *graph, NodeType type, Vector2 position) {
         AddPort(graph, node, "Rows", VALUE_RECORD, PORT_DIR_INPUT, 55);
         AddPort(graph, node, "Values", VALUE_NONE, PORT_DIR_OUTPUT, 112);
         break;
+    case NODE_NUMBER_FILTER:
+        TextCopy(node->title, "Match Number");
+        TextCopy(node->parameter, "0");
+        node->number_filter_op = NUMBER_FILTER_GTE;
+        node->bounds.height = 200;
+        AddPort(graph, node, "Stream", VALUE_NONE, PORT_DIR_INPUT, 55);
+        AddPort(graph, node, "Rows", VALUE_NONE, PORT_DIR_OUTPUT, 155);
+        break;
     }
     PropagateSchemas(graph);
     return node;
@@ -184,7 +190,8 @@ static bool PortCanFeedNode(const Port *from, const Node *consumer) {
         return from->data_type == VALUE_STRING;
     case NODE_GET:
         return from->data_type == VALUE_RECORD;
-    case NODE_STRING_FILTER:
+    case NODE_MATCH_STRING:
+    case NODE_NUMBER_FILTER:
     case NODE_INSERT:
         return true;
     default:
@@ -284,6 +291,16 @@ bool IsEditingText(GraphContext *graph) {
     return false;
 }
 
+void CloseNodeEditors(GraphContext *graph, int except_node_id) {
+    for (int i = 0; i < graph->node_count; i++) {
+        Node *node = &graph->nodes[i];
+        if (node->id != except_node_id) {
+            node->text_editing = false;
+            node->editing_control = -1;
+        }
+    }
+}
+
 static void MarkDirtyRecursive(GraphContext *graph, int node_id, bool visited[MAX_NODES]) {
     int node_index = -1;
     for (int i = 0; i < graph->node_count; i++) {
@@ -357,7 +374,8 @@ void PropagateSchemas(GraphContext *graph) {
                 memset(&input->schema, 0, sizeof(input->schema));
             }
         }
-        if (node->type == NODE_STRING_FILTER || node->type == NODE_INSERT || node->type == NODE_GET) {
+        if (node->type == NODE_MATCH_STRING || node->type == NODE_NUMBER_FILTER ||
+            node->type == NODE_INSERT || node->type == NODE_GET) {
             Port *output = NodeOutputPort(graph, node, 0);
             if (output) {
                 output->schema_valid = false;
@@ -382,7 +400,8 @@ void PropagateSchemas(GraphContext *graph) {
 
         for (int i = 0; i < graph->node_count; i++) {
             Node *node = &graph->nodes[i];
-            if (node->type != NODE_STRING_FILTER && node->type != NODE_INSERT && node->type != NODE_GET) {
+            if (node->type != NODE_MATCH_STRING && node->type != NODE_NUMBER_FILTER &&
+                node->type != NODE_INSERT && node->type != NODE_GET) {
                 continue;
             }
             Port *input = FindPort(graph, node->input_port_ids[0]);
@@ -403,8 +422,12 @@ void PropagateSchemas(GraphContext *graph) {
                 continue;
             }
 
-            if (node->type == NODE_STRING_FILTER && !ValueTypeIsText(selected_type)) {
-                SetSchemaError(node, "Where currently supports text-like fields");
+            if (node->type == NODE_MATCH_STRING && !ValueTypeIsText(selected_type)) {
+                SetSchemaError(node, "Match String requires a String field");
+                continue;
+            }
+            if (node->type == NODE_NUMBER_FILTER && !ValueTypeIsNumeric(selected_type)) {
+                SetSchemaError(node, "Match Number requires a numeric field");
                 continue;
             }
             if (node->type == NODE_INSERT) {

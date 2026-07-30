@@ -62,7 +62,7 @@ static void UpdateMouseCursor(GraphContext *graph, Vector2 mouse) {
     } else if (graph->interaction_mode == INTERACTION_KNIFE || graph->interaction_mode == INTERACTION_LINKING) {
         cursor = MOUSE_CURSOR_CROSSHAIR;
     } else if (MouseOverDialogTextBox(graph, mouse) ||
-               (!MouseOverPortInspector(graph, mouse) && MouseOverNodeTextBox(graph, mouse))) {
+               (!MouseOverAnyInspectorWindow(graph, mouse) && MouseOverNodeTextBox(graph, mouse))) {
         cursor = MOUSE_CURSOR_IBEAM;
     }
 
@@ -71,6 +71,41 @@ static void UpdateMouseCursor(GraphContext *graph, Vector2 mouse) {
         SetMouseCursor(cursor);
         current_cursor = cursor;
     }
+}
+
+static Rectangle InspectorWindowRect(GraphContext *graph, InspectorWindow *win) {
+    Port *port = FindPort(graph, win->port_id);
+    float min_w = UiSize(graph, 200.0f);
+    float min_h = UiSize(graph, 120.0f);
+    float w, h;
+    if (win->size.x > 0 && win->size.y > 0) {
+        w = win->size.x;
+        h = win->size.y;
+    } else {
+        w = UiSize(graph, port && port->data_type == VALUE_RECORD ? 720.0f : 280.0f);
+        h = UiSize(graph, 280.0f);
+    }
+    w = Clamp(w, min_w, (float)GetScreenWidth() - UiSize(graph, 24.0f));
+    h = Clamp(h, min_h, (float)GetScreenHeight() - UiSize(graph, 48.0f));
+    return (Rectangle){win->pos.x, win->pos.y, w, h};
+}
+
+// Returns the InspectorWindow whose title bar (excluding close button) is under the mouse.
+static InspectorWindow *InspectorWindowTitleBarAtMouse(GraphContext *graph, Vector2 mouse) {
+    // GuiWindowBox title bar is 24px tall; the rightmost 24px is the close button — skip it.
+    float title_h = 24.0f;
+    for (int i = 0; i < MAX_INSPECTOR_WINDOWS; i++) {
+        InspectorWindow *win = &graph->inspector_windows[i];
+        if (win->port_id <= 0) {
+            continue;
+        }
+        Rectangle panel = InspectorWindowRect(graph, win);
+        Rectangle title_bar = {panel.x, panel.y, panel.width - title_h, title_h};
+        if (CheckCollisionPointRec(mouse, title_bar)) {
+            return win;
+        }
+    }
+    return (InspectorWindow *)0;
 }
 
 void UpdateCanvas(GraphContext *graph) {
@@ -101,6 +136,18 @@ void UpdateCanvas(GraphContext *graph) {
         graph->knife_start = mouse;
         TextCopy(graph->status, "Knife active - release to cut nodes and connections");
     }
+
+    if (IsKeyPressed(KEY_SPACE) && in_canvas && !IsMouseButtonDown(MOUSE_BUTTON_LEFT) &&
+        graph->interaction_mode == INTERACTION_IDLE && !IsEditingText(graph)) {
+        graph->add_menu_open = !graph->add_menu_open;
+        graph->add_menu_pos = mouse;
+        graph->open_dialog_open = false;
+    }
+
+    if (IsKeyPressed(KEY_ESCAPE) && graph->add_menu_open) {
+        graph->add_menu_open = false;
+    }
+
     graph->interaction_mode = ResolveInteractionMode(graph, panning);
 
     if ((IsKeyPressed(KEY_DELETE) || IsKeyPressed(KEY_BACKSPACE)) && graph->selected_node_id >= 0 &&
@@ -122,6 +169,27 @@ void UpdateCanvas(GraphContext *graph) {
         camera = CanvasCamera(graph);
         Vector2 after = GetScreenToWorld2D(mouse, camera);
         graph->camera.target = Vector2Add(graph->camera.target, Vector2Subtract(before, after));
+    }
+
+    // Inspector window drag: title-bar drag moves the window.
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && graph->interaction_mode == INTERACTION_IDLE) {
+        InspectorWindow *win = InspectorWindowTitleBarAtMouse(graph, mouse);
+        if (win && !win->resizing) {
+            win->dragging = true;
+            win->drag_offset = (Vector2){mouse.x - win->pos.x, mouse.y - win->pos.y};
+        }
+    }
+    for (int i = 0; i < MAX_INSPECTOR_WINDOWS; i++) {
+        InspectorWindow *win = &graph->inspector_windows[i];
+        if (!win->dragging) {
+            continue;
+        }
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            win->pos.x = mouse.x - win->drag_offset.x;
+            win->pos.y = mouse.y - win->drag_offset.y;
+        } else {
+            win->dragging = false;
+        }
     }
 
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && in_canvas && graph->interaction_mode == INTERACTION_IDLE) {
@@ -146,11 +214,10 @@ void UpdateCanvas(GraphContext *graph) {
             if (graph->active_port_id >= 0) {
                 TextCopy(graph->status, "Link detached - drop it on an input to reconnect");
             }
-        } else if (MouseOverPortInspector(graph, mouse)) {
-            // clicks inside the pinned inspector panel: let raygui handle scrolling/selection
+        } else if (MouseOverAnyInspectorWindow(graph, mouse)) {
+            // clicks inside an inspector window: let raygui handle it
         } else if (node) {
             graph->selected_node_id = node_id;
-            graph->inspected_port_id = -1;
             Rectangle b = NodeScreenBounds(graph, node);
             bool over_control = MouseOverNodeControl(graph, node, mouse);
             if (!over_control && mouse.y <= b.y + CanvasSize(graph, NODE_HEADER_HEIGHT)) {
@@ -161,7 +228,6 @@ void UpdateCanvas(GraphContext *graph) {
             BringNodeToFront(graph, node_id);
         } else if (!node) {
             graph->selected_node_id = -1;
-            graph->inspected_port_id = -1;
         }
     }
 
@@ -201,13 +267,27 @@ void UpdateCanvas(GraphContext *graph) {
             if (input >= 0 && AddLink(graph, graph->active_port_id, input)) {
                 TextCopy(graph->status, "Connected - run graph to refresh downstream nodes");
             } else if (PortAtMouse(graph, mouse, PORT_DIR_OUTPUT) == graph->active_port_id) {
-                // Released on the same output port with no link made: toggle pin
-                if (graph->inspected_port_id == graph->active_port_id) {
-                    graph->inspected_port_id = -1;
+                // Released on the same output port: open (or close if already open) inspector window.
+                InspectorWindow *existing = FindInspectorWindow(graph, graph->active_port_id);
+                if (existing) {
+                    CloseInspectorWindow(existing);
                 } else {
-                    graph->inspected_port_id = graph->active_port_id;
-                    graph->inspect_scroll = 0;
-                    graph->inspect_active = -1;
+                    Port *port = FindPort(graph, graph->active_port_id);
+                    Vector2 screen_pos = port ? PortScreenPosition(graph, port) : mouse;
+                    float w = UiSize(graph, port && port->data_type == VALUE_RECORD ? 720.0f : 280.0f);
+                    float h = UiSize(graph, 280.0f);
+                    float x = screen_pos.x + UiSize(graph, PORT_RADIUS + 10.0f);
+                    float y = screen_pos.y - h * 0.3f;
+                    if (x + w > GetScreenWidth()) {
+                        x = screen_pos.x - UiSize(graph, PORT_RADIUS + 10.0f) - w;
+                    }
+                    if (y < ToolbarHeight(graph)) {
+                        y = ToolbarHeight(graph) + UiSize(graph, 4.0f);
+                    }
+                    if (y + h > GetScreenHeight() - StatusHeight(graph)) {
+                        y = GetScreenHeight() - StatusHeight(graph) - h - UiSize(graph, 4.0f);
+                    }
+                    OpenInspectorWindow(graph, graph->active_port_id, (Vector2){x, y});
                 }
             }
             graph->active_port_id = -1;

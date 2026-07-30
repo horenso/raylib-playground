@@ -105,7 +105,10 @@ bool LoadGraph(GraphContext *graph, const char *path) {
     graph->selected_node_id = -1;
     graph->active_port_id = -1;
     graph->dragging_node_id = -1;
-    graph->inspected_port_id = -1;
+    for (int i = 0; i < MAX_INSPECTOR_WINDOWS; i++) {
+        graph->inspector_windows[i].port_id = -1;
+        graph->inspector_windows[i].active = -1;
+    }
     graph->add_menu_open = false;
 
     char line[1024];

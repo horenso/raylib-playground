@@ -4,6 +4,7 @@
 
 const char *ValueTypeName(ValueType type);
 bool ValueTypeIsText(ValueType type);
+bool ValueTypeIsNumeric(ValueType type);
 int SchemaFieldIndex(const RecordSchema *schema, const char *name);
 bool SchemaHasField(const RecordSchema *schema, const char *name, ValueType type);
 bool SchemaAddField(RecordSchema *schema, const char *name, ValueType type, bool derived);

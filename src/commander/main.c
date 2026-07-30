@@ -35,7 +35,10 @@ int main(int argc, char **argv) {
     graph.selected_node_id = -1;
     graph.active_port_id = -1;
     graph.dragging_node_id = -1;
-    graph.inspected_port_id = -1;
+    for (int i = 0; i < MAX_INSPECTOR_WINDOWS; i++) {
+        graph.inspector_windows[i].port_id = -1;
+        graph.inspector_windows[i].active = -1;
+    }
 
     if (argc >= 2) {
         if (LoadGraph(&graph, argv[1])) {
@@ -88,12 +91,22 @@ int main(int argc, char **argv) {
             DrawKnife(&graph, graph.knife_start, GetMousePosition());
         }
 
-        // Draw pinned inspector or hover preview
+        // Draw persistent inspector windows
+        for (int i = 0; i < MAX_INSPECTOR_WINDOWS; i++) {
+            InspectorWindow *win = &graph.inspector_windows[i];
+            if (win->port_id <= 0) {
+                continue;
+            }
+            if (DrawInspectorWindow(&graph, win)) {
+                CloseInspectorWindow(win);
+            }
+        }
+
+        // Draw hover preview when not dragging a port and no inspector open for it
         int hovered_output = PortAtMouse(&graph, GetMousePosition(), PORT_DIR_OUTPUT);
-        if (graph.inspected_port_id >= 0) {
-            DrawPortInspector(&graph, graph.inspected_port_id, true);
-        } else if (hovered_output >= 0 && graph.interaction_mode == INTERACTION_IDLE) {
-            DrawPortInspector(&graph, hovered_output, false);
+        if (hovered_output >= 0 && graph.interaction_mode == INTERACTION_IDLE &&
+            !FindInspectorWindow(&graph, hovered_output)) {
+            DrawPortHoverPreview(&graph, hovered_output);
         }
 
         DrawToolbar(&graph);
