@@ -67,7 +67,8 @@ static Rectangle NodeRunButtonBounds(GraphContext *graph, Node *node) {
 }
 
 static bool NodeOwnsMouse(GraphContext *graph, Node *node) {
-    return graph->interaction_mode == INTERACTION_IDLE && NodeAtMouse(graph, GetMousePosition()) == node->id;
+    return graph->interaction_mode == INTERACTION_IDLE && !node->field_dropdown_open && !node->unit_dropdown_open &&
+           NodeAtMouse(graph, GetMousePosition()) == node->id;
 }
 
 void DrawNodeShell(GraphContext *graph, Node *node) {
@@ -171,47 +172,100 @@ static bool DrawNodeOptionButton(GraphContext *graph, Node *node, Rectangle boun
            CheckCollisionPointRec(GetMousePosition(), bounds);
 }
 
-static bool FieldIsSelectable(const Node *node, ValueType type) {
-    return node->type == NODE_GET || ValueTypeIsText(type);
+static float FieldSelectorYUnits(const Node *node) {
+    return NODE_HEADER_HEIGHT + (node && node->type == NODE_INSERT ? 10.0f : 12.0f);
 }
 
-static const char *NextFieldName(Node *node, Port *input) {
-    if (!input || !input->schema_valid || input->data_type != VALUE_RECORD) {
-        return "Item";
-    }
-    int current = SchemaFieldIndex(&input->schema, node->field_name);
-    for (int offset = 1; offset <= input->schema.field_count; offset++) {
-        int index = (current + offset) % input->schema.field_count;
-        if (FieldIsSelectable(node, input->schema.fields[index].type)) {
-            return input->schema.fields[index].name;
-        }
-    }
-    return "";
-}
-
-static void DrawFieldSelector(GraphContext *graph, Node *node, float y_units, const char *label) {
+Rectangle FieldSelectorButtonBounds(GraphContext *graph, Node *node) {
     Rectangle bounds = NodeScreenBounds(graph, node);
-    Port *input = InputSourcePort(graph, node, 0);
-    float font_size = ScaledFontSize(BODY_TEXT_SIZE, CanvasUnit(graph));
-    DrawInterfaceText(fonts.node_body, label, bounds.x + CanvasSize(graph, 14.0f),
-                      bounds.y + CanvasSize(graph, y_units + 6.0f), font_size, COLOR_MUTED);
-    Rectangle button = {
+    return (Rectangle){
         bounds.x + CanvasSize(graph, 72.0f),
-        bounds.y + CanvasSize(graph, y_units),
+        bounds.y + CanvasSize(graph, FieldSelectorYUnits(node)),
         bounds.width - CanvasSize(graph, 86.0f),
         CanvasSize(graph, 26.0f),
     };
+}
+
+static void DrawFieldSelector(GraphContext *graph, Node *node, const char *label) {
+    Rectangle bounds = NodeScreenBounds(graph, node);
+    float y_units = FieldSelectorYUnits(node);
+    float font_size = ScaledFontSize(BODY_TEXT_SIZE, CanvasUnit(graph));
+    DrawInterfaceText(fonts.node_body, label, bounds.x + CanvasSize(graph, 14.0f),
+                      bounds.y + CanvasSize(graph, y_units + 6.0f), font_size, COLOR_MUTED);
+    Rectangle button = FieldSelectorButtonBounds(graph, node);
     const char *field = node->field_name[0] ? node->field_name : "connect input";
     DrawRectangleRec(button, (Color){48, 55, 70, 255});
     DrawRectangleLinesEx(button, CanvasUnit(graph),
                          node->schema_error ? (Color){235, 87, 87, 255} : (Color){75, 84, 101, 255});
-    DrawInterfaceText(fonts.node_body, TextFormat("%s  ▾", field), button.x + CanvasSize(graph, 7.0f),
+    DrawInterfaceText(fonts.node_body, field, button.x + CanvasSize(graph, 7.0f),
                       button.y + (button.height - font_size) * 0.5f, font_size, COLOR_TEXT);
-    if (NodeOwnsMouse(graph, node) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
-        CheckCollisionPointRec(GetMousePosition(), button) && input) {
-        TextCopy(node->field_name, NextFieldName(node, input));
-        MarkNodeDirty(graph, node->id);
-        TextCopy(graph->status, "Field selection changed - downstream schemas updated");
+    int icon_scale = CanvasUnit(graph) >= 1.5f ? 2 : 1;
+    int icon_size = 16 * icon_scale;
+    int icon_x = (int)(button.x + button.width - CanvasSize(graph, 6.0f) - icon_size);
+    int icon_y = (int)(button.y + (button.height - icon_size) * 0.5f);
+    GuiDrawIcon(node->field_dropdown_open ? ICON_ARROW_UP_FILL : ICON_ARROW_DOWN_FILL, icon_x, icon_y, icon_scale,
+                COLOR_TEXT);
+    if (!node->field_dropdown_open) {
+        return;
+    }
+
+    const char *options[MAX_FIELDS];
+    int option_count = CollectNodeFieldOptions(graph, node, options, MAX_FIELDS);
+    Vector2 mouse = GetMousePosition();
+    for (int i = 0; i < option_count; i++) {
+        Rectangle item = {button.x, button.y + button.height * (i + 1), button.width, button.height};
+        bool selected = TextIsEqual(options[i], node->field_name);
+        bool hovered = CheckCollisionPointRec(mouse, item);
+        Color background = selected  ? (Color){85, 156, 228, 255}
+                           : hovered ? (Color){59, 70, 90, 255}
+                                     : (Color){38, 44, 56, 255};
+        DrawRectangleRec(item, background);
+        DrawRectangleLinesEx(item, CanvasUnit(graph), (Color){75, 84, 101, 255});
+        DrawInterfaceText(fonts.node_body, options[i], item.x + CanvasSize(graph, 7.0f),
+                          item.y + (item.height - font_size) * 0.5f, font_size, COLOR_TEXT);
+    }
+}
+
+static const char *FileSizeUnitLabel(FileSizeUnit unit) {
+    static const char *labels[] = {"B", "KB", "MB", "GB", "TB"};
+    return unit >= FILE_SIZE_BYTES && unit <= FILE_SIZE_TB ? labels[unit] : labels[0];
+}
+
+Rectangle SizeUnitButtonBounds(GraphContext *graph, Node *node) {
+    Rectangle bounds = NodeScreenBounds(graph, node);
+    return (Rectangle){bounds.x + bounds.width - CanvasSize(graph, 78.0f),
+                       bounds.y + CanvasSize(graph, NODE_HEADER_HEIGHT + 80.0f), CanvasSize(graph, 64.0f),
+                       CanvasSize(graph, 30.0f)};
+}
+
+static void DrawSizeUnitSelector(GraphContext *graph, Node *node) {
+    Rectangle button = SizeUnitButtonBounds(graph, node);
+    float font_size = ScaledFontSize(BODY_TEXT_SIZE, CanvasUnit(graph));
+    DrawRectangleRec(button, (Color){48, 55, 70, 255});
+    DrawRectangleLinesEx(button, CanvasUnit(graph), (Color){75, 84, 101, 255});
+    DrawInterfaceText(fonts.node_body, FileSizeUnitLabel(node->file_size_unit), button.x + CanvasSize(graph, 7.0f),
+                      button.y + (button.height - font_size) * 0.5f, font_size, COLOR_TEXT);
+    int icon_scale = CanvasUnit(graph) >= 1.5f ? 2 : 1;
+    int icon_size = 16 * icon_scale;
+    int icon_x = (int)(button.x + button.width - CanvasSize(graph, 4.0f) - icon_size);
+    int icon_y = (int)(button.y + (button.height - icon_size) * 0.5f);
+    GuiDrawIcon(node->unit_dropdown_open ? ICON_ARROW_UP_FILL : ICON_ARROW_DOWN_FILL, icon_x, icon_y, icon_scale,
+                COLOR_TEXT);
+    if (!node->unit_dropdown_open) {
+        return;
+    }
+    Vector2 mouse = GetMousePosition();
+    for (int i = FILE_SIZE_BYTES; i <= FILE_SIZE_TB; i++) {
+        Rectangle item = {button.x, button.y + button.height * (i + 1), button.width, button.height};
+        bool selected = node->file_size_unit == (FileSizeUnit)i;
+        bool hovered = CheckCollisionPointRec(mouse, item);
+        Color background = selected  ? (Color){85, 156, 228, 255}
+                           : hovered ? (Color){59, 70, 90, 255}
+                                     : (Color){38, 44, 56, 255};
+        DrawRectangleRec(item, background);
+        DrawRectangleLinesEx(item, CanvasUnit(graph), (Color){75, 84, 101, 255});
+        DrawInterfaceText(fonts.node_body, FileSizeUnitLabel((FileSizeUnit)i), item.x + CanvasSize(graph, 7.0f),
+                          item.y + (item.height - font_size) * 0.5f, font_size, COLOR_TEXT);
     }
 }
 
@@ -221,7 +275,14 @@ static bool DrawNodeTextBox(GraphContext *graph, Node *node, Rectangle bounds, c
     TextCopy(before, text);
     SetNodeGuiScale(CanvasUnit(graph));
     bool active = node->editing_control == control_id;
+    bool was_locked = GuiIsLocked();
+    if (node->field_dropdown_open || node->unit_dropdown_open) {
+        GuiLock();
+    }
     bool changed_editing = GuiTextBox(bounds, text, capacity, active);
+    if ((node->field_dropdown_open || node->unit_dropdown_open) && !was_locked) {
+        GuiUnlock();
+    }
     if (changed_editing) {
         bool now_active = !active;
         node->editing_control = now_active ? control_id : -1;
@@ -239,12 +300,12 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
     float body_font_size = ScaledFontSize(BODY_TEXT_SIZE, unit);
     Port *output = NodeOutputPort(graph, node, 0);
 
-    if (node->type == NODE_DIRECTORY_LIST || node->type == NODE_MATCH_STRING || node->type == NODE_EXEC ||
+    ValueType match_type = node->type == NODE_MATCH ? NodeSelectedFieldType(graph, node) : VALUE_NONE;
+    bool text_match = node->type == NODE_MATCH && (match_type == VALUE_NONE || ValueTypeIsText(match_type));
+
+    if (node->type == NODE_DIRECTORY_LIST || text_match || node->type == NODE_EXEC ||
         node->type == NODE_HTTP_REQUEST) {
-        float text_box_y = node->type == NODE_MATCH_STRING ? NODE_HEADER_HEIGHT + 48.0f : NODE_HEADER_HEIGHT + 16.0f;
-        if (node->type == NODE_MATCH_STRING) {
-            DrawFieldSelector(graph, node, NODE_HEADER_HEIGHT + 12.0f, "Field");
-        }
+        float text_box_y = text_match ? NODE_HEADER_HEIGHT + 48.0f : NODE_HEADER_HEIGHT + 16.0f;
         Rectangle text_box = {
             bounds.x + CanvasSize(graph, 14.0f),
             bounds.y + CanvasSize(graph, text_box_y),
@@ -308,7 +369,7 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
                 MarkNodeDirty(graph, node->id);
                 TextCopy(graph->status, "Files depth changed - downstream nodes are dirty");
             }
-        } else if (node->type == NODE_MATCH_STRING) {
+        } else if (text_match) {
             float btn_y = text_box_y + 36.0f;
             float btn_h = 24.0f;
             float btn_w = 34.0f;
@@ -391,9 +452,7 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
             DrawInterfaceText(fonts.node_body, TextFormat("%s | %d item%s", state_label, count, count == 1 ? "" : "s"),
                               bounds.x + CanvasSize(graph, 14.0f), state_y, body_font_size, state_color);
         }
-    } else if (node->type == NODE_NUMBER_FILTER) {
-        DrawFieldSelector(graph, node, NODE_HEADER_HEIGHT + 12.0f, "Field");
-
+    } else if (node->type == NODE_MATCH) {
         // Operator buttons: =  ≠  <  ≤  >  ≥
         const char *op_labels[] = {"=", "!=", "<", "<=", ">", ">="};
         NumberFilterOp ops[] = {NUMBER_FILTER_EQ, NUMBER_FILTER_NEQ, NUMBER_FILTER_LT,
@@ -425,33 +484,16 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
             }
         }
 
+        bool size_match = match_type == VALUE_SIZE;
+        float unit_width = size_match ? 64.0f : 0.0f;
+        float unit_gap = size_match ? 6.0f : 0.0f;
         Rectangle text_box = {
             bounds.x + CanvasSize(graph, start_x),
             bounds.y + CanvasSize(graph, btn_y + btn_h + 8.0f),
-            bounds.width - CanvasSize(graph, start_x * 2),
+            bounds.width - CanvasSize(graph, start_x * 2 + unit_width + unit_gap),
             CanvasSize(graph, 30.0f),
         };
-        if (DrawNodeTextBox(graph, node, text_box, node->parameter, sizeof(node->parameter), 0)) {
-            MarkNodeDirty(graph, node->id);
-        }
-
-        // Include / Exclude toggle
-        const char *mode_label = node->filter_exclude ? "Exclude" : "Include";
-        Rectangle mode_btn = {
-            bounds.x + CanvasSize(graph, start_x),
-            bounds.y + CanvasSize(graph, btn_y + btn_h + 8.0f + 38.0f),
-            CanvasSize(graph, 96.0f),
-            CanvasSize(graph, btn_h),
-        };
-        Color mode_bg = node->filter_exclude ? (Color){190, 82, 92, 255} : active_bg;
-        DrawRectangleRec(mode_btn, mode_bg);
-        DrawRectangleLinesEx(mode_btn, unit, (Color){75, 84, 101, 255});
-        float mode_text_w = MeasureTextEx(fonts.node_body, mode_label, body_font_size, 0).x;
-        DrawInterfaceText(fonts.node_body, mode_label, mode_btn.x + (mode_btn.width - mode_text_w) * 0.5f,
-                          mode_btn.y + (mode_btn.height - body_font_size) * 0.5f, body_font_size, COLOR_TEXT);
-        if (NodeOwnsMouse(graph, node) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
-            CheckCollisionPointRec(GetMousePosition(), mode_btn)) {
-            node->filter_exclude = !node->filter_exclude;
+        if (DrawNodeTextBox(graph, node, text_box, node->number_parameter, sizeof(node->number_parameter), 0)) {
             MarkNodeDirty(graph, node->id);
         }
 
@@ -466,7 +508,6 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
                           bounds.y + bounds.height - CanvasSize(graph, 21.0f),
                           body_font_size, NodeStateColor(node));
     } else if (node->type == NODE_INSERT) {
-        DrawFieldSelector(graph, node, NODE_HEADER_HEIGHT + 10.0f, "From");
         float x = bounds.x + CanvasSize(graph, 14.0f);
         float width = bounds.width - CanvasSize(graph, 28.0f);
         float output_y = bounds.y + CanvasSize(graph, NODE_HEADER_HEIGHT + 43.0f);
@@ -513,7 +554,6 @@ void DrawNodeContent(GraphContext *graph, Node *node) {
         DrawInterfaceText(fonts.node_small, state_label, x, bounds.y + bounds.height - CanvasSize(graph, 21.0f),
                           ScaledFontSize(BODY_TEXT_SIZE * 0.82f, unit), NodeStateColor(node));
     } else if (node->type == NODE_GET) {
-        DrawFieldSelector(graph, node, NODE_HEADER_HEIGHT + 12.0f, "Field");
         const char *state_label = node->schema_error ? "SCHEMA ERROR" : node->is_dirty ? "NOT RUN" : "CURRENT";
         DrawInterfaceText(fonts.node_body, state_label, bounds.x + CanvasSize(graph, 14.0f),
                           bounds.y + bounds.height - CanvasSize(graph, 21.0f), body_font_size, NodeStateColor(node));
@@ -524,6 +564,12 @@ void DrawNode(GraphContext *graph, Node *node) {
     DrawNodeShell(graph, node);
     DrawNodeContent(graph, node);
     DrawNodePorts(graph, node);
+    if (NodeUsesFieldSelector(node)) {
+        DrawFieldSelector(graph, node, node->type == NODE_INSERT ? "From" : "Field");
+    }
+    if (node->type == NODE_MATCH && NodeSelectedFieldType(graph, node) == VALUE_SIZE) {
+        DrawSizeUnitSelector(graph, node);
+    }
 }
 
 bool MouseOverNodeControl(GraphContext *graph, Node *node, Vector2 mouse) {
@@ -536,8 +582,7 @@ bool MouseOverNodeControl(GraphContext *graph, Node *node, Vector2 mouse) {
     Rectangle b = NodeScreenBounds(graph, node);
     float control_y = NODE_HEADER_HEIGHT + 10.0f;
     float control_h = node->type == NODE_DIRECTORY_LIST  ? 110.0f
-                      : node->type == NODE_MATCH_STRING  ? 116.0f
-                      : node->type == NODE_NUMBER_FILTER ? 130.0f
+                      : node->type == NODE_MATCH          ? 116.0f
                       : node->type == NODE_INSERT        ? 190.0f
                       : node->type == NODE_GET           ? 42.0f
                                                          : 42.0f;
@@ -700,13 +745,15 @@ bool DrawInspectorWindow(GraphContext *graph, InspectorWindow *win) {
         }
         Color name_color = field->derived ? (Color){116, 206, 173, 255} : (Color){200, 208, 220, 255};
         DrawInterfaceText(fonts.body, field->name, column_x + UiSize(graph, 8.0f), text_y, fonts.body_size, name_color);
-        // Sort indicator — use a small triangle indicator to the right of the name.
+        // Sort indicator — use the same raygui arrow icons as field dropdowns.
         if (win->sort_field == column) {
-            const char *arrow = win->sort_asc ? " ^" : " v";
             float name_w = MeasureTextEx(fonts.body, field->name, fonts.body_size, 0).x;
-            float ax = column_x + UiSize(graph, 8.0f) + name_w;
-            DrawInterfaceText(fonts.small, arrow, ax, text_y + UiSize(graph, 1.0f), fonts.small_size,
-                              (Color){130, 160, 200, 255});
+            int icon_scale = UiUnit(graph) >= 1.5f ? 2 : 1;
+            int icon_size = 16 * icon_scale;
+            int icon_x = (int)(column_x + UiSize(graph, 12.0f) + name_w);
+            int icon_y = (int)(header.y + (header.height - icon_size) * 0.5f);
+            GuiDrawIcon(win->sort_asc ? ICON_ARROW_UP_FILL : ICON_ARROW_DOWN_FILL, icon_x, icon_y, icon_scale,
+                        (Color){130, 160, 200, 255});
         }
         if (column > 0) {
             DrawLineEx((Vector2){column_x, header.y}, (Vector2){column_x, table_bounds.y + table_bounds.height}, unit,
@@ -1067,10 +1114,9 @@ void DrawToolbar(GraphContext *graph) {
     }
 
     if (graph->add_menu_open) {
-        const char *labels[] = {"Files", "Match String", "Match Number", "Insert", "Get", "Exec", "HTTP Request"};
-        NodeType node_types[] = {NODE_DIRECTORY_LIST, NODE_MATCH_STRING, NODE_NUMBER_FILTER,
-                                 NODE_INSERT, NODE_GET, NODE_EXEC, NODE_HTTP_REQUEST};
-        int label_count = 7;
+        const char *labels[] = {"Files", "Match", "Insert", "Get", "Exec", "HTTP Request"};
+        NodeType node_types[] = {NODE_DIRECTORY_LIST, NODE_MATCH, NODE_INSERT, NODE_GET, NODE_EXEC, NODE_HTTP_REQUEST};
+        int label_count = 6;
         float menu_w = UiSize(graph, 176.0f);
         float menu_h = UiSize(graph, 10.0f + label_count * 31.0f);
         float menu_x = graph->add_menu_pos.x;

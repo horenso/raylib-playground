@@ -129,10 +129,12 @@ Node *AddNode(GraphContext *graph, NodeType type, Vector2 position) {
             SchemaAddField(&files->schema, "modified", VALUE_DATETIME, false);
         }
         break;
-    case NODE_MATCH_STRING:
-        TextCopy(node->title, "Match String");
+    case NODE_MATCH:
+        TextCopy(node->title, "Match");
         TextCopy(node->parameter, "\\.c$");
+        TextCopy(node->number_parameter, "0");
         node->filter_use_regex = true;
+        node->number_filter_op = NUMBER_FILTER_GTE;
         node->bounds.height = 220;
         AddPort(graph, node, "Stream", VALUE_NONE, PORT_DIR_INPUT, 55);
         AddPort(graph, node, "Rows", VALUE_NONE, PORT_DIR_OUTPUT, 178);
@@ -168,13 +170,7 @@ Node *AddNode(GraphContext *graph, NodeType type, Vector2 position) {
         AddPort(graph, node, "Rows", VALUE_RECORD, PORT_DIR_INPUT, 55);
         AddPort(graph, node, "Values", VALUE_NONE, PORT_DIR_OUTPUT, 112);
         break;
-    case NODE_NUMBER_FILTER:
-        TextCopy(node->title, "Match Number");
-        TextCopy(node->parameter, "0");
-        node->number_filter_op = NUMBER_FILTER_GTE;
-        node->bounds.height = 200;
-        AddPort(graph, node, "Stream", VALUE_NONE, PORT_DIR_INPUT, 55);
-        AddPort(graph, node, "Rows", VALUE_NONE, PORT_DIR_OUTPUT, 155);
+    case NODE_LEGACY_NUMBER_FILTER: // Serialized type 6; upgraded by LoadGraph().
         break;
     }
     PropagateSchemas(graph);
@@ -190,8 +186,7 @@ static bool PortCanFeedNode(const Port *from, const Node *consumer) {
         return from->data_type == VALUE_STRING;
     case NODE_GET:
         return from->data_type == VALUE_RECORD;
-    case NODE_MATCH_STRING:
-    case NODE_NUMBER_FILTER:
+    case NODE_MATCH:
     case NODE_INSERT:
         return true;
     default:
@@ -346,8 +341,14 @@ static const FieldSchema *ChooseDefaultField(Node *node, const Port *input) {
     }
     if (!node->field_name[0]) {
         int preferred = SchemaFieldIndex(&input->schema, node->type == NODE_INSERT ? "path" : "name");
-        if (preferred < 0) {
-            preferred = 0;
+        if (preferred < 0 || !NodeFieldIsSelectable(node, input->schema.fields[preferred].type)) {
+            preferred = -1;
+            for (int i = 0; i < input->schema.field_count; i++) {
+                if (NodeFieldIsSelectable(node, input->schema.fields[i].type)) {
+                    preferred = i;
+                    break;
+                }
+            }
         }
         if (preferred >= 0 && preferred < input->schema.field_count) {
             TextCopy(node->field_name, input->schema.fields[preferred].name);
@@ -355,6 +356,67 @@ static const FieldSchema *ChooseDefaultField(Node *node, const Port *input) {
     }
     int index = SchemaFieldIndex(&input->schema, node->field_name);
     return index >= 0 ? &input->schema.fields[index] : NULL;
+}
+
+bool NodeFieldIsSelectable(const Node *node, ValueType type) {
+    if (!node) {
+        return false;
+    }
+    switch (node->type) {
+    case NODE_MATCH:
+        return ValueTypeIsText(type) || ValueTypeIsNumeric(type);
+    case NODE_INSERT:
+        return ValueTypeIsText(type);
+    case NODE_GET:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool NodeUsesFieldSelector(const Node *node) {
+    return node &&
+           (node->type == NODE_MATCH || node->type == NODE_INSERT || node->type == NODE_GET);
+}
+
+int CollectNodeFieldOptions(GraphContext *graph, Node *node, const char **options, int capacity) {
+    if (!graph || !NodeUsesFieldSelector(node) || !options || capacity <= 0) {
+        return 0;
+    }
+    Port *input = InputSourcePort(graph, node, 0);
+    if (!input || !input->schema_valid) {
+        return 0;
+    }
+    if (input->data_type != VALUE_RECORD) {
+        if (NodeFieldIsSelectable(node, input->data_type)) {
+            options[0] = "Item";
+            return 1;
+        }
+        return 0;
+    }
+
+    int count = 0;
+    for (int i = 0; i < input->schema.field_count && count < capacity; i++) {
+        if (NodeFieldIsSelectable(node, input->schema.fields[i].type)) {
+            options[count++] = input->schema.fields[i].name;
+        }
+    }
+    return count;
+}
+
+ValueType NodeSelectedFieldType(GraphContext *graph, Node *node) {
+    if (!graph || !node || node->input_count <= 0) {
+        return VALUE_NONE;
+    }
+    Port *input = FindPort(graph, node->input_port_ids[0]);
+    if (!input || !input->schema_valid) {
+        return VALUE_NONE;
+    }
+    if (input->data_type != VALUE_RECORD) {
+        return TextIsEqual(node->field_name, "Item") ? input->data_type : VALUE_NONE;
+    }
+    int index = SchemaFieldIndex(&input->schema, node->field_name);
+    return index >= 0 ? input->schema.fields[index].type : VALUE_NONE;
 }
 
 void PropagateSchemas(GraphContext *graph) {
@@ -374,7 +436,7 @@ void PropagateSchemas(GraphContext *graph) {
                 memset(&input->schema, 0, sizeof(input->schema));
             }
         }
-        if (node->type == NODE_MATCH_STRING || node->type == NODE_NUMBER_FILTER ||
+        if (node->type == NODE_MATCH ||
             node->type == NODE_INSERT || node->type == NODE_GET) {
             Port *output = NodeOutputPort(graph, node, 0);
             if (output) {
@@ -400,7 +462,7 @@ void PropagateSchemas(GraphContext *graph) {
 
         for (int i = 0; i < graph->node_count; i++) {
             Node *node = &graph->nodes[i];
-            if (node->type != NODE_MATCH_STRING && node->type != NODE_NUMBER_FILTER &&
+            if (node->type != NODE_MATCH &&
                 node->type != NODE_INSERT && node->type != NODE_GET) {
                 continue;
             }
@@ -422,12 +484,8 @@ void PropagateSchemas(GraphContext *graph) {
                 continue;
             }
 
-            if (node->type == NODE_MATCH_STRING && !ValueTypeIsText(selected_type)) {
-                SetSchemaError(node, "Match String requires a String field");
-                continue;
-            }
-            if (node->type == NODE_NUMBER_FILTER && !ValueTypeIsNumeric(selected_type)) {
-                SetSchemaError(node, "Match Number requires a numeric field");
+            if (node->type == NODE_MATCH && !ValueTypeIsText(selected_type) && !ValueTypeIsNumeric(selected_type)) {
+                SetSchemaError(node, "Match requires a String or numeric field");
                 continue;
             }
             if (node->type == NODE_INSERT) {

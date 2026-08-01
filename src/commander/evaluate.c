@@ -165,25 +165,35 @@ static bool EvaluateWhere(GraphContext *graph, Node *node, Port *source, Port *o
     return true;
 }
 
-static long long NumericValue(const StreamValue *value) {
+static long double NumericValue(const StreamValue *value) {
     if (!value) return 0;
     if (value->type == VALUE_INT || value->type == VALUE_DATETIME) return value->as.integer;
-    if (value->type == VALUE_SIZE) return (long long)value->as.file_size;
+    if (value->type == VALUE_SIZE) return value->as.file_size;
     return 0;
 }
 
 static bool EvaluateNumberFilter(GraphContext *graph, Node *node, Port *source, Port *output) {
     char *end;
-    long long threshold = strtoll(node->parameter, &end, 10);
-    if (*node->parameter == '\0' || *end != '\0') {
-        snprintf(graph->status, sizeof(graph->status), "Match Number: invalid threshold '%s'", node->parameter);
+    long double threshold = strtold(node->number_parameter, &end);
+    if (*node->number_parameter == '\0' || *end != '\0') {
+        snprintf(graph->status, sizeof(graph->status), "Match: invalid threshold '%s'", node->number_parameter);
         graph->evaluation_error = true;
         return false;
+    }
+    ValueType field_type = NodeSelectedFieldType(graph, node);
+    if (field_type == VALUE_SIZE) {
+        static const unsigned long long multipliers[] = {1ULL, 1024ULL, 1024ULL * 1024ULL,
+                                                         1024ULL * 1024ULL * 1024ULL,
+                                                         1024ULL * 1024ULL * 1024ULL * 1024ULL};
+        int unit = node->file_size_unit >= FILE_SIZE_BYTES && node->file_size_unit <= FILE_SIZE_TB
+                       ? node->file_size_unit
+                       : FILE_SIZE_BYTES;
+        threshold *= multipliers[unit];
     }
     for (int i = 0; output && i < source->item_count && output->item_count < MAX_ITEMS; i++) {
         const StreamValue *value = ItemFieldValue(source, &source->items[i], node->field_name);
         if (!value || !ValueTypeIsNumeric(value->type)) continue;
-        long long v = NumericValue(value);
+        long double v = NumericValue(value);
         bool matched = false;
         switch (node->number_filter_op) {
         case NUMBER_FILTER_EQ:  matched = v == threshold; break;
@@ -359,10 +369,10 @@ bool EvaluateNode(GraphContext *graph, Node *node, int depth) {
             AppendDirectoryEntries(node, output, entries);
             UnloadDirectoryFiles(entries);
         }
-    } else if (node->type == NODE_MATCH_STRING) {
-        success = EvaluateWhere(graph, node, source_port, output);
-    } else if (node->type == NODE_NUMBER_FILTER) {
-        success = EvaluateNumberFilter(graph, node, source_port, output);
+    } else if (node->type == NODE_MATCH) {
+        ValueType field_type = NodeSelectedFieldType(graph, node);
+        success = ValueTypeIsText(field_type) ? EvaluateWhere(graph, node, source_port, output)
+                                              : EvaluateNumberFilter(graph, node, source_port, output);
     } else if (node->type == NODE_INSERT) {
         success = EvaluateInsert(node, source_port, output);
     } else if (node->type == NODE_GET) {
@@ -512,7 +522,7 @@ void SeedGraph(GraphContext *graph) {
     TextCopy(graph->status, "Ready - Files now emits typed rows; inspect an output to see its schema");
 
     Node *files = AddNode(graph, NODE_DIRECTORY_LIST, (Vector2){45, 110});
-    Node *where = AddNode(graph, NODE_MATCH_STRING, (Vector2){360, 110});
+    Node *where = AddNode(graph, NODE_MATCH, (Vector2){360, 110});
     Node *insert = AddNode(graph, NODE_INSERT, (Vector2){675, 110});
     if (files && where && insert) {
         AddLink(graph, files->output_port_ids[0], where->input_port_ids[0]);

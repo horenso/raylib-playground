@@ -80,12 +80,12 @@ typedef enum {
 
 typedef enum {
     NODE_DIRECTORY_LIST,
-    NODE_MATCH_STRING,
+    NODE_MATCH,
     NODE_EXEC,
     NODE_HTTP_REQUEST,
     NODE_INSERT,
     NODE_GET,
-    NODE_NUMBER_FILTER,
+    NODE_LEGACY_NUMBER_FILTER,
 } NodeType;
 
 typedef enum {
@@ -96,6 +96,14 @@ typedef enum {
     NUMBER_FILTER_GT,
     NUMBER_FILTER_GTE,
 } NumberFilterOp;
+
+typedef enum {
+    FILE_SIZE_BYTES,
+    FILE_SIZE_KB,
+    FILE_SIZE_MB,
+    FILE_SIZE_GB,
+    FILE_SIZE_TB,
+} FileSizeUnit;
 
 typedef enum {
     INSERT_REPLACE_TEXT,
@@ -150,6 +158,7 @@ typedef struct {
     bool text_editing;
     int editing_control;
     char parameter[128];
+    char number_parameter[128];
     char secondary_parameter[128];
     char field_name[MAX_FIELD_NAME];
     char output_field_name[MAX_FIELD_NAME];
@@ -163,6 +172,9 @@ typedef struct {
     bool filter_use_regex;
     bool filter_exclude;
     NumberFilterOp number_filter_op;
+    FileSizeUnit file_size_unit;
+    bool field_dropdown_open;
+    bool unit_dropdown_open;
     int list_scroll;
     int list_active;
 } Node;

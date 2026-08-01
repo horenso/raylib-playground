@@ -15,3 +15,5 @@ bool MouseOverAnyInspectorWindow(GraphContext *graph, Vector2 mouse);
 void DrawToolbar(GraphContext *graph);
 void DrawStatusBar(GraphContext *graph);
 bool MouseOverNodeControl(GraphContext *graph, Node *node, Vector2 mouse);
+Rectangle FieldSelectorButtonBounds(GraphContext *graph, Node *node);
+Rectangle SizeUnitButtonBounds(GraphContext *graph, Node *node);
