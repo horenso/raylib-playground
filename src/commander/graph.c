@@ -1,5 +1,6 @@
 #include "graph.h"
 #include "config.h"
+#include "node_def.h"
 #include "streams.h"
 
 #include "raylib.h"
@@ -114,66 +115,12 @@ Node *AddNode(GraphContext *graph, NodeType type, Vector2 position) {
     node->list_active = -1;
     node->editing_control = -1;
 
-    switch (type) {
-    case NODE_DIRECTORY_LIST:
-        TextCopy(node->title, "Files");
-        TextCopy(node->parameter, ".");
-        node->directory_entry_type = DIRECTORY_ENTRY_FILES;
-        node->bounds.height = 220;
-        AddPort(graph, node, "Rows", VALUE_RECORD, PORT_DIR_OUTPUT, 112);
-        Port *files = NodeOutputPort(graph, node, 0);
-        if (files) {
-            SchemaAddField(&files->schema, "path", VALUE_STRING, false);
-            SchemaAddField(&files->schema, "name", VALUE_STRING, false);
-            SchemaAddField(&files->schema, "type", VALUE_STRING, false);
-            SchemaAddField(&files->schema, "size", VALUE_SIZE, false);
-            SchemaAddField(&files->schema, "modified", VALUE_DATETIME, false);
-        }
-        break;
-    case NODE_MATCH:
-        TextCopy(node->title, "Match");
-        TextCopy(node->parameter, "\\.c$");
-        TextCopy(node->number_parameter, "0");
-        node->filter_use_regex = true;
-        node->number_filter_op = NUMBER_FILTER_GTE;
-        node->bounds.height = 220;
-        AddPort(graph, node, "Stream", VALUE_NONE, PORT_DIR_INPUT, 55);
-        AddPort(graph, node, "Rows", VALUE_NONE, PORT_DIR_OUTPUT, 178);
-        break;
-    case NODE_EXEC:
-        TextCopy(node->title, "Exec");
-        TextCopy(node->parameter, "sort");
-        node->bounds.width = 320;
-        node->bounds.height = 184;
-        AddPort(graph, node, "Stdin", VALUE_STRING, PORT_DIR_INPUT, 55);
-        AddPort(graph, node, "Stdout", VALUE_STRING, PORT_DIR_OUTPUT, 148);
-        AddPort(graph, node, "Stderr", VALUE_STRING, PORT_DIR_OUTPUT, 148);
-        break;
-    case NODE_HTTP_REQUEST:
-        TextCopy(node->title, "HTTP Request");
-        TextCopy(node->parameter, "https://");
-        node->bounds.height = 164;
-        AddPort(graph, node, "Lines", VALUE_STRING, PORT_DIR_OUTPUT, 112);
-        break;
-    case NODE_INSERT:
-        TextCopy(node->title, "Insert");
-        TextCopy(node->parameter, "IMG_");
-        TextCopy(node->secondary_parameter, "holiday_");
-        TextCopy(node->output_field_name, "destination");
-        node->bounds.width = 300;
-        node->bounds.height = 300;
-        AddPort(graph, node, "Stream", VALUE_NONE, PORT_DIR_INPUT, 55);
-        AddPort(graph, node, "Rows", VALUE_NONE, PORT_DIR_OUTPUT, 178);
-        break;
-    case NODE_GET:
-        TextCopy(node->title, "Get");
-        node->bounds.height = 150;
-        AddPort(graph, node, "Rows", VALUE_RECORD, PORT_DIR_INPUT, 55);
-        AddPort(graph, node, "Values", VALUE_NONE, PORT_DIR_OUTPUT, 112);
-        break;
-    case NODE_LEGACY_NUMBER_FILTER: // Serialized type 6; upgraded by LoadGraph().
-        break;
+    const NodeDef *def = GetNodeDef(type);
+    if (!def || !def->init) {
+        graph->node_count--;
+        return NULL;
     }
+    def->init(graph, node);
     PropagateSchemas(graph);
     return node;
 }
@@ -182,17 +129,15 @@ static bool PortCanFeedNode(const Port *from, const Node *consumer) {
     if (!from || !consumer || !from->schema_valid) {
         return false;
     }
-    switch (consumer->type) {
-    case NODE_EXEC:
-        return from->data_type == VALUE_STRING;
-    case NODE_GET:
-        return from->data_type == VALUE_RECORD;
-    case NODE_MATCH:
-    case NODE_INSERT:
-        return true;
-    default:
+    const NodeDef *def = GetNodeDef(consumer->type);
+    if (!def) {
         return false;
     }
+    // Nodes with no can_accept (NULL) don't accept any input
+    if (!def->can_accept) {
+        return false;
+    }
+    return def->can_accept(from);
 }
 
 bool AddLink(GraphContext *graph, int from_id, int to_id) {
@@ -349,7 +294,7 @@ void MatchFieldTypeChanged(Node *node, ValueType previous_type, ValueType select
     }
 }
 
-static const FieldSchema *ChooseDefaultField(Node *node, const Port *input) {
+static const FieldSchema *ChooseDefaultField(Node *node, const Port *input, const char *preferred_name) {
     if (input->data_type != VALUE_RECORD) {
         if (!node->field_name[0]) {
             TextCopy(node->field_name, "Item");
@@ -357,7 +302,7 @@ static const FieldSchema *ChooseDefaultField(Node *node, const Port *input) {
         return NULL;
     }
     if (!node->field_name[0]) {
-        int preferred = SchemaFieldIndex(&input->schema, node->type == NODE_INSERT ? "path" : "name");
+        int preferred = SchemaFieldIndex(&input->schema, preferred_name ? preferred_name : "name");
         if (preferred < 0 || !NodeFieldIsSelectable(node, input->schema.fields[preferred].type)) {
             preferred = -1;
             for (int i = 0; i < input->schema.field_count; i++) {
@@ -379,21 +324,16 @@ bool NodeFieldIsSelectable(const Node *node, ValueType type) {
     if (!node) {
         return false;
     }
-    switch (node->type) {
-    case NODE_MATCH:
-        return ValueTypeIsText(type) || ValueTypeIsNumeric(type);
-    case NODE_INSERT:
-        return ValueTypeIsText(type);
-    case NODE_GET:
-        return true;
-    default:
-        return false;
-    }
+    const NodeDef *def = GetNodeDef(node->type);
+    return def && def->field_is_selectable && def->field_is_selectable(type);
 }
 
 bool NodeUsesFieldSelector(const Node *node) {
-    return node &&
-           (node->type == NODE_MATCH || node->type == NODE_INSERT || node->type == NODE_GET);
+    if (!node) {
+        return false;
+    }
+    const NodeDef *def = GetNodeDef(node->type);
+    return def && def->uses_field_selector;
 }
 
 int CollectNodeFieldOptions(GraphContext *graph, Node *node, const char **options, int capacity) {
@@ -443,18 +383,16 @@ void PropagateSchemas(GraphContext *graph) {
         Node *node = &graph->nodes[i];
         node->schema_error = false;
         node->schema_error_message[0] = '\0';
+        const NodeDef *def = GetNodeDef(node->type);
         for (int p = 0; p < node->input_count; p++) {
             Port *input = FindPort(graph, node->input_port_ids[p]);
             if (input) {
                 input->schema_valid = false;
-                input->data_type = node->type == NODE_GET    ? VALUE_RECORD
-                                   : node->type == NODE_EXEC ? VALUE_STRING
-                                                             : VALUE_NONE;
+                input->data_type = def ? def->expected_input_type : VALUE_NONE;
                 memset(&input->schema, 0, sizeof(input->schema));
             }
         }
-        if (node->type == NODE_MATCH ||
-            node->type == NODE_INSERT || node->type == NODE_GET) {
+        if (def && def->is_schema_computing) {
             Port *output = NodeOutputPort(graph, node, 0);
             if (output) {
                 output->schema_valid = false;
@@ -479,8 +417,8 @@ void PropagateSchemas(GraphContext *graph) {
 
         for (int i = 0; i < graph->node_count; i++) {
             Node *node = &graph->nodes[i];
-            if (node->type != NODE_MATCH &&
-                node->type != NODE_INSERT && node->type != NODE_GET) {
+            const NodeDef *def = GetNodeDef(node->type);
+            if (!def || !def->is_schema_computing || !def->propagate_schema) {
                 continue;
             }
             Port *input = FindPort(graph, node->input_port_ids[0]);
@@ -489,7 +427,7 @@ void PropagateSchemas(GraphContext *graph) {
                 continue;
             }
             ValueType previous_type = NodeSelectedFieldType(graph, node);
-            const FieldSchema *selected = ChooseDefaultField(node, input);
+            const FieldSchema *selected = ChooseDefaultField(node, input, def->preferred_field_name);
             ValueType selected_type = input->data_type;
             if (input->data_type == VALUE_RECORD) {
                 if (!selected) {
@@ -504,40 +442,9 @@ void PropagateSchemas(GraphContext *graph) {
 
             MatchFieldTypeChanged(node, previous_type, selected_type);
 
-            if (node->type == NODE_MATCH && !ValueTypeIsText(selected_type) && !ValueTypeIsNumeric(selected_type)) {
-                SetSchemaError(node, "Match requires a String or numeric field");
+            if (!def->propagate_schema(node, input, output, selected_type)) {
+                node->schema_error = true;
                 continue;
-            }
-            if (node->type == NODE_INSERT) {
-                if (!ValueTypeIsText(selected_type)) {
-                    SetSchemaError(node, "Insert currently supports text-like fields");
-                    continue;
-                }
-                if (!node->output_field_name[0]) {
-                    SetSchemaError(node, "Insert needs a new field name");
-                    continue;
-                }
-                if (input->data_type == VALUE_RECORD &&
-                    SchemaFieldIndex(&input->schema, node->output_field_name) >= 0) {
-                    SetSchemaError(node, "Insert cannot overwrite an existing field");
-                    continue;
-                }
-                output->data_type = VALUE_RECORD;
-                output->schema = input->schema;
-                if (input->data_type != VALUE_RECORD) {
-                    memset(&output->schema, 0, sizeof(output->schema));
-                    SchemaAddField(&output->schema, "Item", input->data_type, false);
-                }
-                if (!SchemaAddField(&output->schema, node->output_field_name, selected_type, true)) {
-                    SetSchemaError(node, "Record has no room for another field");
-                    continue;
-                }
-            } else if (node->type == NODE_GET) {
-                output->data_type = selected_type;
-                memset(&output->schema, 0, sizeof(output->schema));
-            } else {
-                output->data_type = input->data_type;
-                output->schema = input->schema;
             }
             if (!output->schema_valid) {
                 output->schema_valid = true;

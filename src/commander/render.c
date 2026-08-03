@@ -2,6 +2,7 @@
 #include "evaluate.h"
 #include "fonts.h"
 #include "graph.h"
+#include "node_def.h"
 #include "serialize.h"
 #include "streams.h"
 
@@ -66,7 +67,7 @@ static Rectangle NodeRunButtonBounds(GraphContext *graph, Node *node) {
     };
 }
 
-static bool NodeOwnsMouse(GraphContext *graph, Node *node) {
+bool NodeOwnsMouse(GraphContext *graph, Node *node) {
     return graph->interaction_mode == INTERACTION_IDLE && !node->field_dropdown_open && !node->unit_dropdown_open &&
            NodeAtMouse(graph, GetMousePosition()) == node->id;
 }
@@ -166,8 +167,8 @@ void DrawNodePorts(GraphContext *graph, Node *node) {
     }
 }
 
-static bool DrawNodeOptionButton(GraphContext *graph, Node *node, Rectangle bounds, const char *label, bool active,
-                                 float font_size) {
+bool DrawNodeOptionButton(GraphContext *graph, Node *node, Rectangle bounds, const char *label, bool active,
+                          float font_size) {
     Color background = active ? (Color){85, 156, 228, 255} : (Color){48, 55, 70, 255};
     DrawRectangleRec(bounds, background);
     DrawRectangleLinesEx(bounds, CanvasUnit(graph), (Color){75, 84, 101, 255});
@@ -179,7 +180,8 @@ static bool DrawNodeOptionButton(GraphContext *graph, Node *node, Rectangle boun
 }
 
 static float FieldSelectorYUnits(const Node *node) {
-    return NODE_HEADER_HEIGHT + (node && node->type == NODE_INSERT ? 10.0f : 12.0f);
+    const NodeDef *def = GetNodeDef(node->type);
+    return NODE_HEADER_HEIGHT + (def ? def->field_selector_y_offset : 12.0f);
 }
 
 Rectangle FieldSelectorButtonBounds(GraphContext *graph, Node *node) {
@@ -286,8 +288,7 @@ static void DrawSizeUnitDropdown(GraphContext *graph, Node *node) {
     }
 }
 
-static bool DrawNodeTextBox(GraphContext *graph, Node *node, Rectangle bounds, char *text, int capacity,
-                            int control_id) {
+bool DrawNodeTextBox(GraphContext *graph, Node *node, Rectangle bounds, char *text, int capacity, int control_id) {
     char before[128];
     TextCopy(before, text);
     SetNodeGuiScale(CanvasUnit(graph));
@@ -312,302 +313,21 @@ static bool DrawNodeTextBox(GraphContext *graph, Node *node, Rectangle bounds, c
 }
 
 void DrawNodeContent(GraphContext *graph, Node *node) {
-    Rectangle bounds = NodeScreenBounds(graph, node);
-    float unit = CanvasUnit(graph);
-    float body_font_size = ScaledFontSize(BODY_TEXT_SIZE, unit);
-    Port *output = NodeOutputPort(graph, node, 0);
-
-    if (node->type == NODE_MATCH && !InputSourcePort(graph, node, 0)) {
-        const char *state_label = node->schema_error                      ? "SCHEMA ERROR"
-                                  : node->evaluation_failed               ? "FAILED"
-                                  : node->is_dirty && node->has_evaluated ? "DIRTY | cached"
-                                  : node->is_dirty                        ? "NOT RUN"
-                                                                          : "CURRENT";
-        int count = output ? output->item_count : 0;
-        DrawInterfaceText(fonts.node_body, TextFormat("%s | %d item%s", state_label, count, count == 1 ? "" : "s"),
-                          bounds.x + CanvasSize(graph, 14.0f), bounds.y + bounds.height - CanvasSize(graph, 21.0f),
-                          body_font_size, NodeStateColor(node));
-        return;
-    }
-
-    ValueType match_type = node->type == NODE_MATCH ? NodeSelectedFieldType(graph, node) : VALUE_NONE;
-    bool text_match = node->type == NODE_MATCH && (match_type == VALUE_NONE || ValueTypeIsText(match_type));
-
-    if (node->type == NODE_DIRECTORY_LIST || text_match || node->type == NODE_EXEC || node->type == NODE_HTTP_REQUEST) {
-        float text_box_y = text_match ? NODE_HEADER_HEIGHT + 48.0f : NODE_HEADER_HEIGHT + 16.0f;
-        Rectangle text_box = {
-            bounds.x + CanvasSize(graph, 14.0f),
-            bounds.y + CanvasSize(graph, text_box_y),
-            bounds.width - CanvasSize(graph, 28.0f),
-            CanvasSize(graph, 30.0f),
-        };
-        if (DrawNodeTextBox(graph, node, text_box, node->parameter, sizeof(node->parameter), 0)) {
-            MarkNodeDirty(graph, node->id);
-            snprintf(graph->status, sizeof(graph->status), "%s and downstream nodes are dirty", node->title);
-        }
-
-        if (node->type == NODE_DIRECTORY_LIST) {
-            float label_x = bounds.x + CanvasSize(graph, 14.0f);
-            float button_x = bounds.x + CanvasSize(graph, 60.0f);
-            float type_y = bounds.y + CanvasSize(graph, text_box_y + 38.0f);
-            float depth_y = bounds.y + CanvasSize(graph, text_box_y + 68.0f);
-            float button_height = CanvasSize(graph, 24.0f);
-            float gap = CanvasSize(graph, 5.0f);
-            float label_y_offset = FontTextCenterOffset(fonts.node_body, button_height);
-
-            DrawInterfaceText(fonts.node_body, "Type", label_x, type_y + label_y_offset, body_font_size, COLOR_MUTED);
-            struct {
-                const char *label;
-                DirectoryEntryType type;
-                float width;
-            } type_buttons[] = {
-                {"Files", DIRECTORY_ENTRY_FILES, 50.0f},
-                {"Folders", DIRECTORY_ENTRY_FOLDERS, 70.0f},
-                {"Both", DIRECTORY_ENTRY_BOTH, 50.0f},
-            };
-            float x = button_x;
-            for (int i = 0; i < 3; i++) {
-                Rectangle button = {x, type_y, CanvasSize(graph, type_buttons[i].width), button_height};
-                if (DrawNodeOptionButton(graph, node, button, type_buttons[i].label,
-                                         node->directory_entry_type == type_buttons[i].type, body_font_size) &&
-                    node->directory_entry_type != type_buttons[i].type) {
-                    node->directory_entry_type = type_buttons[i].type;
-                    MarkNodeDirty(graph, node->id);
-                    TextCopy(graph->status, "Files type changed - downstream nodes are dirty");
-                }
-                x += button.width + gap;
-            }
-
-            DrawInterfaceText(fonts.node_body, "Depth", label_x, depth_y + label_y_offset, body_font_size, COLOR_MUTED);
-            Rectangle one_layer = {button_x, depth_y, CanvasSize(graph, 82.0f), button_height};
-            Rectangle recursive = {
-                one_layer.x + one_layer.width + gap,
-                depth_y,
-                CanvasSize(graph, 94.0f),
-                button_height,
-            };
-            if (DrawNodeOptionButton(graph, node, one_layer, "One layer", !node->directory_recursive, body_font_size) &&
-                node->directory_recursive) {
-                node->directory_recursive = false;
-                MarkNodeDirty(graph, node->id);
-                TextCopy(graph->status, "Files depth changed - downstream nodes are dirty");
-            }
-            if (DrawNodeOptionButton(graph, node, recursive, "Recursive", node->directory_recursive, body_font_size) &&
-                !node->directory_recursive) {
-                node->directory_recursive = true;
-                MarkNodeDirty(graph, node->id);
-                TextCopy(graph->status, "Files depth changed - downstream nodes are dirty");
-            }
-        } else if (text_match) {
-            float btn_y = text_box_y + 36.0f;
-            float btn_h = 24.0f;
-            float btn_w = 34.0f;
-            float gap = 6.0f;
-            float start_x = 14.0f;
-
-            Color active_bg = {85, 156, 228, 255};
-            Color inactive_bg = {48, 55, 70, 255};
-            Color btn_text = COLOR_TEXT;
-
-            struct {
-                const char *label;
-                bool *flag;
-            } buttons[3] = {
-                {"Aa", &node->filter_case_sensitive},
-                {"W", &node->filter_whole_word},
-                {".*", &node->filter_use_regex},
-            };
-
-            for (int b = 0; b < 3; b++) {
-                Rectangle btn = {
-                    bounds.x + CanvasSize(graph, start_x + b * (btn_w + gap)),
-                    bounds.y + CanvasSize(graph, btn_y),
-                    CanvasSize(graph, btn_w),
-                    CanvasSize(graph, btn_h),
-                };
-                Color bg = *buttons[b].flag ? active_bg : inactive_bg;
-                DrawRectangleRec(btn, bg);
-                DrawRectangleLinesEx(btn, unit, (Color){75, 84, 101, 255});
-                float text_w = MeasureTextEx(fonts.node_body, buttons[b].label, body_font_size, 0).x;
-                DrawInterfaceText(fonts.node_body, buttons[b].label, btn.x + (btn.width - text_w) * 0.5f,
-                                  btn.y + FontTextCenterOffset(fonts.node_body, btn.height), body_font_size, btn_text);
-
-                if (NodeOwnsMouse(graph, node) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
-                    CheckCollisionPointRec(GetMousePosition(), btn)) {
-                    *buttons[b].flag = !(*buttons[b].flag);
-                    MarkNodeDirty(graph, node->id);
-                    snprintf(graph->status, sizeof(graph->status), "Filter and downstream nodes are dirty");
-                }
-            }
-
-            const char *mode_label = node->filter_exclude ? "Exclude" : "Include";
-            Rectangle mode_btn = {
-                bounds.x + CanvasSize(graph, start_x + 3 * (btn_w + gap)),
-                bounds.y + CanvasSize(graph, btn_y),
-                CanvasSize(graph, 96.0f),
-                CanvasSize(graph, btn_h),
-            };
-            Color mode_bg = node->filter_exclude ? (Color){190, 82, 92, 255} : active_bg;
-            DrawRectangleRec(mode_btn, mode_bg);
-            DrawRectangleLinesEx(mode_btn, unit, (Color){75, 84, 101, 255});
-            float mode_text_w = MeasureTextEx(fonts.node_body, mode_label, body_font_size, 0).x;
-            DrawInterfaceText(fonts.node_body, mode_label, mode_btn.x + (mode_btn.width - mode_text_w) * 0.5f,
-                              mode_btn.y + FontTextCenterOffset(fonts.node_body, mode_btn.height), body_font_size,
-                              btn_text);
-
-            if (NodeOwnsMouse(graph, node) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
-                CheckCollisionPointRec(GetMousePosition(), mode_btn)) {
-                node->filter_exclude = !node->filter_exclude;
-                MarkNodeDirty(graph, node->id);
-                snprintf(graph->status, sizeof(graph->status), "Filter mode changed to %s - branch is dirty",
-                         node->filter_exclude ? "exclude" : "include");
-            }
-        }
-
-        const char *state_label = node->schema_error                      ? "SCHEMA ERROR"
-                                  : node->evaluation_failed               ? "FAILED"
-                                  : node->is_dirty && node->has_evaluated ? "DIRTY | cached"
-                                  : node->is_dirty                        ? "NOT RUN"
-                                                                          : "CURRENT";
-        Color state_color = NodeStateColor(node);
-        float state_y = bounds.y + bounds.height - CanvasSize(graph, 21.0f);
-        if (node->type == NODE_EXEC) {
-            Port *errors = NodeOutputPort(graph, node, 1);
-            DrawInterfaceText(fonts.node_body,
-                              TextFormat("%s | %d stdout | %d stderr", state_label, output ? output->item_count : 0,
-                                         errors ? errors->item_count : 0),
-                              bounds.x + CanvasSize(graph, 14.0f), state_y, body_font_size, state_color);
-        } else {
-            int count = output ? output->item_count : 0;
-            DrawInterfaceText(fonts.node_body, TextFormat("%s | %d item%s", state_label, count, count == 1 ? "" : "s"),
-                              bounds.x + CanvasSize(graph, 14.0f), state_y, body_font_size, state_color);
-        }
-    } else if (node->type == NODE_MATCH) {
-        const char *numeric_op_labels[] = {"=", "!=", "<", "<=", ">", ">="};
-        NumberFilterOp numeric_ops[] = {NUMBER_FILTER_EQ,  NUMBER_FILTER_NEQ, NUMBER_FILTER_LT,
-                                        NUMBER_FILTER_LTE, NUMBER_FILTER_GT,  NUMBER_FILTER_GTE};
-        const char *datetime_op_labels[] = {"<", ">="};
-        NumberFilterOp datetime_ops[] = {NUMBER_FILTER_LT, NUMBER_FILTER_GTE};
-        bool datetime_match = match_type == VALUE_DATETIME;
-        const char **op_labels = datetime_match ? datetime_op_labels : numeric_op_labels;
-        NumberFilterOp *ops = datetime_match ? datetime_ops : numeric_ops;
-        int op_count = datetime_match ? 2 : 6;
-        float btn_y = NODE_HEADER_HEIGHT + 48.0f;
-        float btn_h = 24.0f;
-        float btn_w = 33.0f;
-        float gap = 4.0f;
-        float start_x = 14.0f;
-        Color active_bg = {85, 156, 228, 255};
-        Color inactive_bg = {48, 55, 70, 255};
-        for (int b = 0; b < op_count; b++) {
-            Rectangle btn = {
-                bounds.x + CanvasSize(graph, start_x + b * (btn_w + gap)),
-                bounds.y + CanvasSize(graph, btn_y),
-                CanvasSize(graph, btn_w),
-                CanvasSize(graph, btn_h),
-            };
-            Color bg = node->number_filter_op == ops[b] ? active_bg : inactive_bg;
-            DrawRectangleRec(btn, bg);
-            DrawRectangleLinesEx(btn, unit, (Color){75, 84, 101, 255});
-            float tw = MeasureTextEx(fonts.node_body, op_labels[b], body_font_size, 0).x;
-            DrawInterfaceText(fonts.node_body, op_labels[b], btn.x + (btn.width - tw) * 0.5f,
-                              btn.y + FontTextCenterOffset(fonts.node_body, btn.height), body_font_size, COLOR_TEXT);
-            if (NodeOwnsMouse(graph, node) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
-                CheckCollisionPointRec(GetMousePosition(), btn) && node->number_filter_op != ops[b]) {
-                node->number_filter_op = ops[b];
-                MarkNodeDirty(graph, node->id);
-            }
-        }
-
-        if (datetime_match) {
-            DrawInterfaceText(fonts.node_small, "YYYY-MM-DD  HH:MM", bounds.x + CanvasSize(graph, 96.0f),
-                              bounds.y + CanvasSize(graph, btn_y + 6.0f), ScaledFontSize(BODY_TEXT_SIZE * 0.78f, unit),
-                              COLOR_MUTED);
-        }
-
-        bool size_match = match_type == VALUE_SIZE;
-        float unit_width = size_match ? 64.0f : 0.0f;
-        float unit_gap = size_match ? 6.0f : 0.0f;
-        Rectangle text_box = {
-            bounds.x + CanvasSize(graph, start_x),
-            bounds.y + CanvasSize(graph, btn_y + btn_h + 8.0f),
-            bounds.width - CanvasSize(graph, start_x * 2 + unit_width + unit_gap),
-            CanvasSize(graph, 30.0f),
-        };
-        if (DrawNodeTextBox(graph, node, text_box, node->number_parameter, sizeof(node->number_parameter), 0)) {
-            MarkNodeDirty(graph, node->id);
-        }
-
-        const char *state_label = node->schema_error                      ? "SCHEMA ERROR"
-                                  : node->evaluation_failed               ? "FAILED"
-                                  : node->is_dirty && node->has_evaluated ? "DIRTY | cached"
-                                  : node->is_dirty                        ? "NOT RUN"
-                                                                          : "CURRENT";
-        int count = output ? output->item_count : 0;
-        DrawInterfaceText(fonts.node_body, TextFormat("%s | %d item%s", state_label, count, count == 1 ? "" : "s"),
-                          bounds.x + CanvasSize(graph, 14.0f), bounds.y + bounds.height - CanvasSize(graph, 21.0f),
-                          body_font_size, NodeStateColor(node));
-    } else if (node->type == NODE_INSERT) {
-        float x = bounds.x + CanvasSize(graph, 14.0f);
-        float width = bounds.width - CanvasSize(graph, 28.0f);
-        float output_y = bounds.y + CanvasSize(graph, NODE_HEADER_HEIGHT + 43.0f);
-        DrawInterfaceText(fonts.node_small, "New field", x, output_y, ScaledFontSize(BODY_TEXT_SIZE * 0.8f, unit),
-                          COLOR_MUTED);
-        Rectangle output_box = {x + CanvasSize(graph, 72.0f), output_y - CanvasSize(graph, 5.0f),
-                                width - CanvasSize(graph, 72.0f), CanvasSize(graph, 27.0f)};
-        if (DrawNodeTextBox(graph, node, output_box, node->output_field_name, sizeof(node->output_field_name), 0)) {
-            MarkNodeDirty(graph, node->id);
-        }
-
-        float find_y = bounds.y + CanvasSize(graph, NODE_HEADER_HEIGHT + 76.0f);
-        float replace_y = bounds.y + CanvasSize(graph, NODE_HEADER_HEIGHT + 111.0f);
-        DrawInterfaceText(fonts.node_small, "Find", x, find_y + CanvasSize(graph, 7.0f),
-                          ScaledFontSize(BODY_TEXT_SIZE * 0.8f, unit), COLOR_MUTED);
-        DrawInterfaceText(fonts.node_small, "With", x, replace_y + CanvasSize(graph, 7.0f),
-                          ScaledFontSize(BODY_TEXT_SIZE * 0.8f, unit), COLOR_MUTED);
-        Rectangle find_box = {x + CanvasSize(graph, 50.0f), find_y, width - CanvasSize(graph, 50.0f),
-                              CanvasSize(graph, 28.0f)};
-        Rectangle replace_box = {x + CanvasSize(graph, 50.0f), replace_y, width - CanvasSize(graph, 50.0f),
-                                 CanvasSize(graph, 28.0f)};
-        bool find_changed = DrawNodeTextBox(graph, node, find_box, node->parameter, sizeof(node->parameter), 1);
-        bool replacement_changed =
-            DrawNodeTextBox(graph, node, replace_box, node->secondary_parameter, sizeof(node->secondary_parameter), 2);
-        if (find_changed || replacement_changed) {
-            MarkNodeDirty(graph, node->id);
-        }
-
-        const char *operations[] = {"Text", "Filename", "Extension"};
-        float operation_y = bounds.y + CanvasSize(graph, NODE_HEADER_HEIGHT + 150.0f);
-        for (int i = 0; i < 3; i++) {
-            Rectangle button = {x + CanvasSize(graph, i * 88.0f), operation_y, CanvasSize(graph, 82.0f),
-                                CanvasSize(graph, 25.0f)};
-            if (DrawNodeOptionButton(graph, node, button, operations[i], node->insert_operation == (InsertOperation)i,
-                                     body_font_size) &&
-                node->insert_operation != (InsertOperation)i) {
-                node->insert_operation = (InsertOperation)i;
-                MarkNodeDirty(graph, node->id);
-            }
-        }
-        const char *state_label = node->schema_error ? node->schema_error_message
-                                  : node->is_dirty   ? "NOT RUN"
-                                                     : "CURRENT";
-        DrawInterfaceText(fonts.node_small, state_label, x, bounds.y + bounds.height - CanvasSize(graph, 21.0f),
-                          ScaledFontSize(BODY_TEXT_SIZE * 0.82f, unit), NodeStateColor(node));
-    } else if (node->type == NODE_GET) {
-        const char *state_label = node->schema_error ? "SCHEMA ERROR" : node->is_dirty ? "NOT RUN" : "CURRENT";
-        DrawInterfaceText(fonts.node_body, state_label, bounds.x + CanvasSize(graph, 14.0f),
-                          bounds.y + bounds.height - CanvasSize(graph, 21.0f), body_font_size, NodeStateColor(node));
+    const NodeDef *def = GetNodeDef(node->type);
+    if (def && def->draw_content) {
+        def->draw_content(graph, node);
     }
 }
 
 void DrawNode(GraphContext *graph, Node *node) {
+    const NodeDef *def = GetNodeDef(node->type);
     DrawNodeShell(graph, node);
     DrawNodeContent(graph, node);
     DrawNodePorts(graph, node);
-    if (NodeUsesFieldSelector(node)) {
-        DrawFieldSelector(graph, node, node->type == NODE_INSERT ? "From" : "Field");
+    if (def && def->uses_field_selector) {
+        DrawFieldSelector(graph, node, def->field_selector_label ? def->field_selector_label : "Field");
     }
-    if (node->type == NODE_MATCH && NodeSelectedFieldType(graph, node) == VALUE_SIZE) {
+    if (def && def->uses_field_selector && NodeSelectedFieldType(graph, node) == VALUE_SIZE) {
         DrawSizeUnitSelector(graph, node);
     }
 }
@@ -628,18 +348,16 @@ bool MouseOverNodeControl(GraphContext *graph, Node *node, Vector2 mouse) {
     if (CheckCollisionPointRec(mouse, NodeRunButtonBounds(graph, node))) {
         return true;
     }
+    const NodeDef *def = GetNodeDef(node->type);
+    if (!def || def->control_height <= 0.0f) {
+        return false;
+    }
     Rectangle b = NodeScreenBounds(graph, node);
-    float control_y = NODE_HEADER_HEIGHT + 10.0f;
-    float control_h = node->type == NODE_DIRECTORY_LIST ? 110.0f
-                      : node->type == NODE_MATCH        ? 116.0f
-                      : node->type == NODE_INSERT       ? 190.0f
-                      : node->type == NODE_GET          ? 42.0f
-                                                        : 42.0f;
     return CheckCollisionPointRec(mouse, (Rectangle){
                                              b.x + CanvasSize(graph, 10.0f),
-                                             b.y + CanvasSize(graph, control_y),
+                                             b.y + CanvasSize(graph, NODE_HEADER_HEIGHT + 10.0f),
                                              b.width - CanvasSize(graph, 20.0f),
-                                             CanvasSize(graph, control_h),
+                                             CanvasSize(graph, def->control_height),
                                          });
 }
 

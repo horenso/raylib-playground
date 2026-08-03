@@ -1,5 +1,6 @@
 #include "input.h"
 #include "graph.h"
+#include "node_def.h"
 #include "render.h"
 #include "streams.h"
 
@@ -15,45 +16,12 @@ static bool MouseOverNodeTextBox(GraphContext *graph, Vector2 mouse) {
         if (node->field_dropdown_open || node->unit_dropdown_open) {
             continue;
         }
-        Rectangle bounds = NodeScreenBounds(graph, node);
         if (NodeUsesFieldSelector(node) && CheckCollisionPointRec(mouse, FieldSelectorButtonBounds(graph, node))) {
             continue;
         }
-        if (node->type == NODE_MATCH && !InputSourcePort(graph, node, 0)) {
-            continue;
-        }
-
-        float text_box_y = NODE_HEADER_HEIGHT + 16.0f;
-        if (node->type == NODE_MATCH) {
-            ValueType field_type = NodeSelectedFieldType(graph, node);
-            text_box_y = field_type == VALUE_NONE || ValueTypeIsText(field_type) ? NODE_HEADER_HEIGHT + 48.0f
-                                                                                 : NODE_HEADER_HEIGHT + 80.0f;
-            if (field_type == VALUE_SIZE && CheckCollisionPointRec(mouse, SizeUnitButtonBounds(graph, node))) {
-                continue;
-            }
-        }
-        Rectangle text_box = {bounds.x + CanvasSize(graph, 14.0f), bounds.y + CanvasSize(graph, text_box_y),
-                              bounds.width - CanvasSize(graph, 28.0f), CanvasSize(graph, 30.0f)};
-        bool has_primary_text_box = node->type == NODE_DIRECTORY_LIST || node->type == NODE_MATCH ||
-                                    node->type == NODE_EXEC ||
-                                    node->type == NODE_HTTP_REQUEST;
-        if (has_primary_text_box && CheckCollisionPointRec(mouse, text_box)) {
+        const NodeDef *def = GetNodeDef(node->type);
+        if (def && def->mouse_in_edit_area && def->mouse_in_edit_area(graph, node, mouse)) {
             return true;
-        }
-
-        if (node->type == NODE_INSERT) {
-            Rectangle output = {bounds.x + CanvasSize(graph, 86.0f),
-                                bounds.y + CanvasSize(graph, NODE_HEADER_HEIGHT + 38.0f),
-                                bounds.width - CanvasSize(graph, 100.0f), CanvasSize(graph, 27.0f)};
-            Rectangle find = {bounds.x + CanvasSize(graph, 64.0f),
-                              bounds.y + CanvasSize(graph, NODE_HEADER_HEIGHT + 76.0f),
-                              bounds.width - CanvasSize(graph, 78.0f), CanvasSize(graph, 28.0f)};
-            Rectangle replace = {find.x, bounds.y + CanvasSize(graph, NODE_HEADER_HEIGHT + 111.0f), find.width,
-                                 find.height};
-            if (CheckCollisionPointRec(mouse, output) || CheckCollisionPointRec(mouse, find) ||
-                CheckCollisionPointRec(mouse, replace)) {
-                return true;
-            }
         }
     }
     return false;
@@ -105,8 +73,7 @@ static bool UpdateNodeDropdowns(GraphContext *graph, Vector2 mouse) {
     // A unit selector is only meaningful while the selected field is a size.
     for (int i = 0; i < graph->node_count; i++) {
         Node *node = &graph->nodes[i];
-        if (node->unit_dropdown_open &&
-            (node->type != NODE_MATCH || NodeSelectedFieldType(graph, node) != VALUE_SIZE)) {
+        if (node->unit_dropdown_open && NodeSelectedFieldType(graph, node) != VALUE_SIZE) {
             node->unit_dropdown_open = false;
         }
     }
@@ -175,7 +142,8 @@ static bool UpdateNodeDropdowns(GraphContext *graph, Vector2 mouse) {
 
     for (int i = graph->node_count - 1; i >= 0; i--) {
         Node *node = &graph->nodes[i];
-        if (node->type == NODE_MATCH && NodeSelectedFieldType(graph, node) == VALUE_SIZE &&
+        const NodeDef *def = GetNodeDef(node->type);
+        if (def && def->uses_field_selector && NodeSelectedFieldType(graph, node) == VALUE_SIZE &&
             CheckCollisionPointRec(mouse, SizeUnitButtonBounds(graph, node))) {
             CloseNodeDropdowns(graph);
             node->unit_dropdown_open = true;

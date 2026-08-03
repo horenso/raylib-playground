@@ -19,3 +19,8 @@ void DrawStatusBar(GraphContext *graph);
 bool MouseOverNodeControl(GraphContext *graph, Node *node, Vector2 mouse);
 Rectangle FieldSelectorButtonBounds(GraphContext *graph, Node *node);
 Rectangle SizeUnitButtonBounds(GraphContext *graph, Node *node);
+// Exported for use by node_def.c draw_content callbacks
+bool NodeOwnsMouse(GraphContext *graph, Node *node);
+bool DrawNodeTextBox(GraphContext *graph, Node *node, Rectangle bounds, char *text, int capacity, int control_id);
+bool DrawNodeOptionButton(GraphContext *graph, Node *node, Rectangle bounds, const char *label, bool active,
+                          float font_size);

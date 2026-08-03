@@ -1,7 +1,9 @@
 #include "serialize.h"
 #include "graph.h"
+#include "node_def.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 // File format (text):
@@ -68,7 +70,9 @@ bool SaveGraph(GraphContext *graph, const char *path) {
         escape(n->parameter, esc, sizeof(esc));
         char title_esc[128];
         escape(n->title, title_esc, sizeof(title_esc));
-        fprintf(f, "node %d %d %f %f %f %f %d %s %d %d %d %s %d %d %d\n", n->id, (int)n->type, n->bounds.x, n->bounds.y,
+        const NodeDef *def = GetNodeDef(n->type);
+        const char *type_name = def && def->name ? def->name : "?";
+        fprintf(f, "node %d %s %f %f %f %f %d %s %d %d %d %s %d %d %d\n", n->id, type_name, n->bounds.x, n->bounds.y,
                 n->bounds.width, n->bounds.height, 0, esc, (int)n->filter_case_sensitive, (int)n->filter_whole_word,
                 (int)n->filter_use_regex, title_esc, (int)n->filter_exclude, (int)n->directory_entry_type,
                 (int)n->directory_recursive);
@@ -83,8 +87,8 @@ bool SaveGraph(GraphContext *graph, const char *path) {
         char field_esc[128];
         escape(n->number_parameter, number_esc, sizeof(number_esc));
         escape(n->field_name, field_esc, sizeof(field_esc));
-        fprintf(f, "match_config %d %s %d %d %s\n", n->id, number_esc, (int)n->number_filter_op,
-                (int)n->file_size_unit, field_esc[0] ? field_esc : "-");
+        fprintf(f, "match_config %d %s %d %d %s\n", n->id, number_esc, (int)n->number_filter_op, (int)n->file_size_unit,
+                field_esc[0] ? field_esc : "-");
     }
 
     for (int i = 0; i < graph->port_count; i++) {
@@ -147,16 +151,30 @@ bool LoadGraph(GraphContext *graph, const char *path) {
             memset(n, 0, sizeof(*n));
             n->list_active = -1;
             n->editing_control = -1;
-            int type, cs, ww, re, exclude = 0;
+            int cs, ww, re, exclude = 0;
             int directory_entry_type = DIRECTORY_ENTRY_FILES;
             int directory_recursive = 0;
+            char type_str[32] = {0};
             char esc_param[512] = {0};
             char esc_title[128] = {0};
-            sscanf(line, "node %d %d %f %f %f %f %*d %511s %d %d %d %127s %d %d %d", &n->id, &type, &n->bounds.x,
+            sscanf(line, "node %d %31s %f %f %f %f %*d %511s %d %d %d %127s %d %d %d", &n->id, type_str, &n->bounds.x,
                    &n->bounds.y, &n->bounds.width, &n->bounds.height, esc_param, &cs, &ww, &re, esc_title, &exclude,
                    &directory_entry_type, &directory_recursive);
-            bool legacy_number = type == NODE_LEGACY_NUMBER_FILTER;
-            n->type = legacy_number ? NODE_MATCH : (NodeType)type;
+            int type_int = NodeTypeFromName(type_str);
+            if (type_int < 0) {
+                // Backward compat: old files saved integer type codes
+                char *endp;
+                long val = strtol(type_str, &endp, 10);
+                if (*endp == '\0' && val >= 0 && val <= NODE_LEGACY_NUMBER_FILTER) {
+                    type_int = (int)val;
+                }
+            }
+            if (type_int < 0) {
+                graph->node_count--;
+                continue;
+            }
+            bool legacy_number = type_int == NODE_LEGACY_NUMBER_FILTER;
+            n->type = legacy_number ? NODE_MATCH : (NodeType)type_int;
             TextCopy(n->number_parameter, "0");
             n->number_filter_op = NUMBER_FILTER_GTE;
             if (directory_entry_type < DIRECTORY_ENTRY_FILES || directory_entry_type > DIRECTORY_ENTRY_BOTH) {
@@ -186,8 +204,7 @@ bool LoadGraph(GraphContext *graph, const char *path) {
             int node_id, op, unit;
             char number_esc[512] = {0};
             char field_esc[128] = {0};
-            int parsed = sscanf(line, "match_config %d %511s %d %d %127s", &node_id, number_esc, &op, &unit,
-                                field_esc);
+            int parsed = sscanf(line, "match_config %d %511s %d %d %127s", &node_id, number_esc, &op, &unit, field_esc);
             if (parsed < 4) {
                 continue;
             }
