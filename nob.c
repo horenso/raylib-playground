@@ -67,7 +67,7 @@ int main(int argc, char **argv) {
         nob_cc_flags(&cmd);
         nob_walk_dir("src/commander", collect_c_files, .data = &cmd);
         nob_cc_output(&cmd, OUT_DIR "commander");
-        nob_cmd_append(&cmd, "-I./raylib/include", "-I/usr/include/freetype2", "raylib/lib/libraylib.a", "-L../raylib",
+        nob_cmd_append(&cmd, "-Isrc/commander", "-I./raylib/include", "-I/usr/include/freetype2", "raylib/lib/libraylib.a", "-L../raylib",
                        "-lm", "-lX11", "-lcurl", "-lfreetype");
         if (!nob_cmd_run(&cmd)) {
             nob_log(NOB_ERROR, "Could not build commander");
