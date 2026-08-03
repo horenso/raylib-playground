@@ -6,7 +6,7 @@
 // owns all type-specific behaviour: initialisation, connection rules, schema
 // propagation, evaluation, rendering, and input handling.
 typedef struct {
-    // Identifier written to / read from save files (e.g. "Files", "Match").
+    // Identifier written to / read from save files (e.g. "Files", "Filter").
     const char *name;
 
     // ---------- Lifecycle --------------------------------------------------

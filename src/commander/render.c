@@ -228,6 +228,7 @@ static void DrawFieldDropdown(GraphContext *graph, Node *node) {
     float font_size = ScaledFontSize(BODY_TEXT_SIZE, CanvasUnit(graph));
     const char *options[MAX_FIELDS];
     int option_count = CollectNodeFieldOptions(graph, node, options, MAX_FIELDS);
+    Port *input = node->type == NODE_FILTER ? InputSourcePort(graph, node, 0) : NULL;
     Vector2 mouse = GetMousePosition();
     for (int i = 0; i < option_count; i++) {
         Rectangle item = {button.x, button.y + button.height * (i + 1), button.width, button.height};
@@ -238,7 +239,18 @@ static void DrawFieldDropdown(GraphContext *graph, Node *node) {
                                      : (Color){38, 44, 56, 255};
         DrawRectangleRec(item, background);
         DrawRectangleLinesEx(item, CanvasUnit(graph), (Color){75, 84, 101, 255});
-        DrawInterfaceText(fonts.node_body, options[i], item.x + CanvasSize(graph, 7.0f),
+        const char *option_label = options[i];
+        char typed_option[MAX_FIELD_NAME + 16];
+        if (input) {
+            ValueType type = input->data_type;
+            if (input->data_type == VALUE_RECORD) {
+                int field_index = SchemaFieldIndex(&input->schema, options[i]);
+                type = field_index >= 0 ? input->schema.fields[field_index].type : VALUE_NONE;
+            }
+            snprintf(typed_option, sizeof(typed_option), "%s: %s", options[i], ValueTypeName(type));
+            option_label = typed_option;
+        }
+        DrawInterfaceText(fonts.node_body, option_label, item.x + CanvasSize(graph, 7.0f),
                           item.y + FontTextCenterOffset(fonts.node_body, item.height), font_size, COLOR_TEXT);
     }
 }
@@ -990,8 +1002,8 @@ void DrawToolbar(GraphContext *graph) {
     }
 
     if (graph->add_menu_open) {
-        const char *labels[] = {"Files", "CSV", "Match", "Insert", "Get", "Exec", "HTTP Request"};
-        NodeType node_types[] = {NODE_DIRECTORY_LIST, NODE_CSV,  NODE_MATCH, NODE_INSERT,
+        const char *labels[] = {"Files", "CSV", "Filter", "Insert", "Get", "Exec", "HTTP Request"};
+        NodeType node_types[] = {NODE_DIRECTORY_LIST, NODE_CSV,  NODE_FILTER, NODE_INSERT,
                                  NODE_GET,            NODE_EXEC, NODE_HTTP_REQUEST};
         int label_count = 7;
         float menu_w = UiSize(graph, 176.0f);

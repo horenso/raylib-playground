@@ -21,7 +21,7 @@ bool NodeFieldIsSelectable(const Node *node, ValueType type);
 bool NodeUsesFieldSelector(const Node *node);
 int CollectNodeFieldOptions(GraphContext *graph, Node *node, const char **options, int capacity);
 ValueType NodeSelectedFieldType(GraphContext *graph, Node *node);
-void MatchFieldTypeChanged(Node *node, ValueType previous_type, ValueType selected_type);
+void FilterFieldTypeChanged(Node *node, ValueType previous_type, ValueType selected_type);
 Port *InputSourcePort(GraphContext *graph, Node *node, int input_index);
 Port *NodeOutputPort(GraphContext *graph, Node *node, int output_index);
 void BringNodeToFront(GraphContext *graph, int id);

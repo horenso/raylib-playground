@@ -124,18 +124,18 @@ void SeedGraph(GraphContext *graph) {
     TextCopy(graph->status, "Ready - Files now emits typed rows; inspect an output to see its schema");
 
     Node *files = AddNode(graph, NODE_DIRECTORY_LIST, (Vector2){45, 110});
-    Node *where = AddNode(graph, NODE_MATCH, (Vector2){360, 110});
+    Node *filter = AddNode(graph, NODE_FILTER, (Vector2){360, 110});
     Node *insert = AddNode(graph, NODE_INSERT, (Vector2){675, 110});
-    if (files && where && insert) {
-        AddLink(graph, files->output_port_ids[0], where->input_port_ids[0]);
-        AddLink(graph, where->output_port_ids[0], insert->input_port_ids[0]);
-        TextCopy(where->field_name, "name");
-        TextCopy(where->parameter, "\\.jpg$");
-        TextCopy(insert->field_name, "path");
-        TextCopy(insert->output_field_name, "destination");
+    if (files && filter && insert) {
+        AddLink(graph, files->output_port_ids[0], filter->input_port_ids[0]);
+        AddLink(graph, filter->output_port_ids[0], insert->input_port_ids[0]);
+        TextCopy(filter->field_name, "");
+        TextCopy(filter->parameter, "");
+        TextCopy(insert->field_name, "");
+        TextCopy(insert->output_field_name, "");
         insert->insert_operation = INSERT_REPLACE_FILENAME;
-        TextCopy(insert->parameter, "IMG_");
-        TextCopy(insert->secondary_parameter, "holiday_");
+        TextCopy(insert->parameter, "");
+        TextCopy(insert->secondary_parameter, "");
         PropagateSchemas(graph);
     }
 }

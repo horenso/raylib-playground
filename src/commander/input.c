@@ -96,7 +96,7 @@ static bool UpdateNodeDropdowns(GraphContext *graph, Vector2 mouse) {
                         if (!TextIsEqual(node->field_name, options[option])) {
                             ValueType previous_type = NodeSelectedFieldType(graph, node);
                             TextCopy(node->field_name, options[option]);
-                            MatchFieldTypeChanged(node, previous_type, NodeSelectedFieldType(graph, node));
+                            FilterFieldTypeChanged(node, previous_type, NodeSelectedFieldType(graph, node));
                             MarkNodeDirty(graph, node->id);
                             TextCopy(graph->status, "Field selection changed - downstream schemas updated");
                         }

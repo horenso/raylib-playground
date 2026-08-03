@@ -15,7 +15,7 @@
 #include <time.h>
 
 // ============================================================
-// Text-match helpers
+// Text-filter helpers
 // ============================================================
 
 static bool TextMatches(const Node *node, const char *text, regex_t *expression) {
@@ -86,7 +86,7 @@ static bool EvaluateWhere(GraphContext *graph, Node *node, Port *source, Port *o
 }
 
 // ============================================================
-// Numeric-match helpers
+// Numeric-filter helpers
 // ============================================================
 
 static long double NumericValue(const StreamValue *value) {
@@ -153,7 +153,7 @@ static bool EvaluateNumberFilter(GraphContext *graph, Node *node, Port *source, 
     long double threshold = 0;
     if (field_type == VALUE_DATETIME) {
         if (!ParseDateTimeThreshold(node->number_parameter, &threshold)) {
-            snprintf(graph->status, sizeof(graph->status), "Match: use date YYYY-MM-DD or YYYY-MM-DD HH:MM");
+            snprintf(graph->status, sizeof(graph->status), "Filter: use date YYYY-MM-DD or YYYY-MM-DD HH:MM");
             graph->evaluation_error = true;
             return false;
         }
@@ -161,7 +161,7 @@ static bool EvaluateNumberFilter(GraphContext *graph, Node *node, Port *source, 
         char *end;
         threshold = strtold(node->number_parameter, &end);
         if (*node->number_parameter == '\0' || *end != '\0') {
-            snprintf(graph->status, sizeof(graph->status), "Match: invalid threshold '%s'", node->number_parameter);
+            snprintf(graph->status, sizeof(graph->status), "Filter: invalid threshold '%s'", node->number_parameter);
             graph->evaluation_error = true;
             return false;
         }
@@ -213,8 +213,8 @@ static bool EvaluateNumberFilter(GraphContext *graph, Node *node, Port *source, 
 // Init
 // ============================================================
 
-static void InitMatch(GraphContext *graph, Node *node) {
-    TextCopy(node->title, "Match");
+static void InitFilter(GraphContext *graph, Node *node) {
+    TextCopy(node->title, "Filter");
     TextCopy(node->parameter, "\\.c$");
     TextCopy(node->number_parameter, "0");
     node->filter_use_regex = true;
@@ -228,15 +228,15 @@ static void InitMatch(GraphContext *graph, Node *node) {
 // Connection / schema
 // ============================================================
 
-static bool CanAcceptMatch(const Port *from) {
+static bool CanAcceptFilter(const Port *from) {
     (void)from;
     return true;
 }
-static bool FieldIsSelectableMatch(ValueType type) { return ValueTypeIsText(type) || ValueTypeIsNumeric(type); }
+static bool FieldIsSelectableFilter(ValueType type) { return ValueTypeIsText(type) || ValueTypeIsNumeric(type); }
 
-static bool PropagateSchemaMatch(Node *node, Port *input, Port *output, ValueType selected_type) {
+static bool PropagateSchemaFilter(Node *node, Port *input, Port *output, ValueType selected_type) {
     if (!ValueTypeIsText(selected_type) && !ValueTypeIsNumeric(selected_type)) {
-        TextCopy(node->schema_error_message, "Match requires a String or numeric field");
+        TextCopy(node->schema_error_message, "Filter requires a String or numeric field");
         return false;
     }
     output->data_type = input->data_type;
@@ -248,7 +248,7 @@ static bool PropagateSchemaMatch(Node *node, Port *input, Port *output, ValueTyp
 // Evaluate
 // ============================================================
 
-static bool EvaluateMatch(GraphContext *graph, Node *node, Port *source, Port *output) {
+static bool EvaluateFilter(GraphContext *graph, Node *node, Port *source, Port *output) {
     ValueType field_type = NodeSelectedFieldType(graph, node);
     return ValueTypeIsText(field_type) ? EvaluateWhere(graph, node, source, output)
                                        : EvaluateNumberFilter(graph, node, source, output);
@@ -258,7 +258,7 @@ static bool EvaluateMatch(GraphContext *graph, Node *node, Port *source, Port *o
 // Draw
 // ============================================================
 
-static void DrawMatchContent(GraphContext *graph, Node *node) {
+static void DrawFilterContent(GraphContext *graph, Node *node) {
     Rectangle bounds = NodeScreenBounds(graph, node);
     float unit = CanvasUnit(graph);
     float body_font_size = ScaledFontSize(BODY_TEXT_SIZE, unit);
@@ -273,10 +273,10 @@ static void DrawMatchContent(GraphContext *graph, Node *node) {
         return;
     }
 
-    ValueType match_type = NodeSelectedFieldType(graph, node);
-    bool text_match = match_type == VALUE_NONE || ValueTypeIsText(match_type);
+    ValueType filter_type = NodeSelectedFieldType(graph, node);
+    bool text_filter = filter_type == VALUE_NONE || ValueTypeIsText(filter_type);
 
-    if (text_match) {
+    if (text_filter) {
         float text_box_y = NODE_HEADER_HEIGHT + 48.0f;
         Rectangle text_box = {
             bounds.x + CanvasSize(graph, 14.0f),
@@ -349,10 +349,10 @@ static void DrawMatchContent(GraphContext *graph, Node *node) {
                                         NUMBER_FILTER_LTE, NUMBER_FILTER_GT,  NUMBER_FILTER_GTE};
         const char *datetime_op_labels[] = {"<", ">="};
         NumberFilterOp datetime_ops[] = {NUMBER_FILTER_LT, NUMBER_FILTER_GTE};
-        bool datetime_match = match_type == VALUE_DATETIME;
-        const char **op_labels = datetime_match ? datetime_op_labels : numeric_op_labels;
-        NumberFilterOp *ops = datetime_match ? datetime_ops : numeric_ops;
-        int op_count = datetime_match ? 2 : 6;
+        bool datetime_filter = filter_type == VALUE_DATETIME;
+        const char **op_labels = datetime_filter ? datetime_op_labels : numeric_op_labels;
+        NumberFilterOp *ops = datetime_filter ? datetime_ops : numeric_ops;
+        int op_count = datetime_filter ? 2 : 6;
 
         float btn_y = NODE_HEADER_HEIGHT + 48.0f, btn_h = 24.0f, btn_w = 33.0f, gap = 4.0f, start_x = 14.0f;
         Color active_bg = {85, 156, 228, 255};
@@ -376,15 +376,15 @@ static void DrawMatchContent(GraphContext *graph, Node *node) {
                 MarkNodeDirty(graph, node->id);
             }
         }
-        if (datetime_match) {
+        if (datetime_filter) {
             DrawInterfaceText(fonts.node_small, "YYYY-MM-DD  HH:MM", bounds.x + CanvasSize(graph, 96.0f),
                               bounds.y + CanvasSize(graph, btn_y + 6.0f), ScaledFontSize(BODY_TEXT_SIZE * 0.78f, unit),
                               COLOR_MUTED);
         }
 
-        bool size_match = match_type == VALUE_SIZE;
-        float unit_width = size_match ? 64.0f : 0.0f;
-        float unit_gap = size_match ? 6.0f : 0.0f;
+        bool size_filter = filter_type == VALUE_SIZE;
+        float unit_width = size_filter ? 64.0f : 0.0f;
+        float unit_gap = size_filter ? 6.0f : 0.0f;
         Rectangle text_box = {
             bounds.x + CanvasSize(graph, start_x),
             bounds.y + CanvasSize(graph, btn_y + btn_h + 8.0f),
@@ -406,7 +406,7 @@ static void DrawMatchContent(GraphContext *graph, Node *node) {
 // Mouse hit-test
 // ============================================================
 
-static bool MouseInEditAreaMatch(GraphContext *graph, Node *node, Vector2 mouse) {
+static bool MouseInEditAreaFilter(GraphContext *graph, Node *node, Vector2 mouse) {
     if (!InputSourcePort(graph, node, 0)) {
         return false;
     }
@@ -414,8 +414,8 @@ static bool MouseInEditAreaMatch(GraphContext *graph, Node *node, Vector2 mouse)
     if (field_type == VALUE_SIZE && CheckCollisionPointRec(mouse, SizeUnitButtonBounds(graph, node))) {
         return false;
     }
-    bool text_match = field_type == VALUE_NONE || ValueTypeIsText(field_type);
-    float text_box_y = text_match ? NODE_HEADER_HEIGHT + 48.0f : NODE_HEADER_HEIGHT + 80.0f;
+    bool text_filter = field_type == VALUE_NONE || ValueTypeIsText(field_type);
+    float text_box_y = text_filter ? NODE_HEADER_HEIGHT + 48.0f : NODE_HEADER_HEIGHT + 80.0f;
     Rectangle bounds = NodeScreenBounds(graph, node);
     Rectangle text_box = {
         bounds.x + CanvasSize(graph, 14.0f),
@@ -430,20 +430,20 @@ static bool MouseInEditAreaMatch(GraphContext *graph, Node *node, Vector2 mouse)
 // NodeDef
 // ============================================================
 
-const NodeDef kMatchNodeDef = {
-    .name = "Match",
-    .init = InitMatch,
-    .can_accept = CanAcceptMatch,
+const NodeDef kFilterNodeDef = {
+    .name = "Filter",
+    .init = InitFilter,
+    .can_accept = CanAcceptFilter,
     .expected_input_type = VALUE_NONE,
     .is_schema_computing = true,
     .preferred_field_name = "name",
-    .field_is_selectable = FieldIsSelectableMatch,
-    .propagate_schema = PropagateSchemaMatch,
+    .field_is_selectable = FieldIsSelectableFilter,
+    .propagate_schema = PropagateSchemaFilter,
     .uses_field_selector = true,
     .field_selector_label = "Field",
     .field_selector_y_offset = 12.0f,
-    .evaluate = EvaluateMatch,
-    .draw_content = DrawMatchContent,
+    .evaluate = EvaluateFilter,
+    .draw_content = DrawFilterContent,
     .control_height = 116.0f,
-    .mouse_in_edit_area = MouseInEditAreaMatch,
+    .mouse_in_edit_area = MouseInEditAreaFilter,
 };

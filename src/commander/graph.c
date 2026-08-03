@@ -279,8 +279,8 @@ static void SetSchemaError(Node *node, const char *message) {
     TextCopy(node->schema_error_message, message);
 }
 
-void MatchFieldTypeChanged(Node *node, ValueType previous_type, ValueType selected_type) {
-    if (!node || node->type != NODE_MATCH || selected_type != VALUE_DATETIME) {
+void FilterFieldTypeChanged(Node *node, ValueType previous_type, ValueType selected_type) {
+    if (!node || node->type != NODE_FILTER || selected_type != VALUE_DATETIME) {
         return;
     }
     if (previous_type != VALUE_DATETIME || !node->number_parameter[0] || TextIsEqual(node->number_parameter, "0")) {
@@ -452,7 +452,7 @@ void PropagateSchemas(GraphContext *graph) {
                 continue;
             }
 
-            MatchFieldTypeChanged(node, previous_type, selected_type);
+            FilterFieldTypeChanged(node, previous_type, selected_type);
 
             if (!def->propagate_schema(node, input, output, selected_type)) {
                 node->schema_error = true;

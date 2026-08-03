@@ -82,7 +82,7 @@ typedef enum {
 
 typedef enum {
     NODE_DIRECTORY_LIST,
-    NODE_MATCH,
+    NODE_FILTER,
     NODE_EXEC,
     NODE_HTTP_REQUEST,
     NODE_INSERT,

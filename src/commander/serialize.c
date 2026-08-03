@@ -10,7 +10,8 @@
 //   camera <zoom> <target_x> <target_y>
 //   node <id> <type> <x> <y> <w> <h> <legacy_state> <parameter_escaped> <case_sensitive> <whole_word> <use_regex>
 //        <title_escaped> <exclude> <directory_entry_type> <directory_recursive>
-//   match_config <node_id> <number_escaped> <number_op> <size_unit> <field_escaped>
+//   filter_config <node_id> <number_escaped> <number_op> <size_unit> <field_escaped>
+//   (legacy files may use match_config for the same data)
 //   port <id> <node_id> <name> <data_type> <direction> <rel_x> <rel_y>
 //   link <from_port_id> <to_port_id>
 //   eof
@@ -80,14 +81,14 @@ bool SaveGraph(GraphContext *graph, const char *path) {
 
     for (int i = 0; i < graph->node_count; i++) {
         Node *n = &graph->nodes[i];
-        if (n->type != NODE_MATCH) {
+        if (n->type != NODE_FILTER) {
             continue;
         }
         char number_esc[512];
         char field_esc[128];
         escape(n->number_parameter, number_esc, sizeof(number_esc));
         escape(n->field_name, field_esc, sizeof(field_esc));
-        fprintf(f, "match_config %d %s %d %d %s\n", n->id, number_esc, (int)n->number_filter_op, (int)n->file_size_unit,
+        fprintf(f, "filter_config %d %s %d %d %s\n", n->id, number_esc, (int)n->number_filter_op, (int)n->file_size_unit,
                 field_esc[0] ? field_esc : "-");
     }
 
@@ -174,7 +175,7 @@ bool LoadGraph(GraphContext *graph, const char *path) {
                 continue;
             }
             bool legacy_number = type_int == NODE_LEGACY_NUMBER_FILTER;
-            n->type = legacy_number ? NODE_MATCH : (NodeType)type_int;
+            n->type = legacy_number ? NODE_FILTER : (NodeType)type_int;
             TextCopy(n->number_parameter, "0");
             n->number_filter_op = NUMBER_FILTER_GTE;
             if (directory_entry_type < DIRECTORY_ENTRY_FILES || directory_entry_type > DIRECTORY_ENTRY_BOTH) {
@@ -189,9 +190,9 @@ bool LoadGraph(GraphContext *graph, const char *path) {
             n->is_dirty = true;
             unescape(esc_param, n->parameter, sizeof(n->parameter));
             unescape(esc_title, n->title, sizeof(n->title));
-            if (n->type == NODE_MATCH) {
+            if (n->type == NODE_FILTER) {
                 n->bounds.height = 220.0f;
-                TextCopy(n->title, "Match");
+                TextCopy(n->title, "Filter");
                 if (legacy_number) {
                     TextCopy(n->number_parameter, n->parameter);
                     TextCopy(n->parameter, "\\.c$");
@@ -200,16 +201,16 @@ bool LoadGraph(GraphContext *graph, const char *path) {
                 }
             }
 
-        } else if (strcmp(tag, "match_config") == 0) {
+        } else if (strcmp(tag, "filter_config") == 0 || strcmp(tag, "match_config") == 0) {
             int node_id, op, unit;
             char number_esc[512] = {0};
             char field_esc[128] = {0};
-            int parsed = sscanf(line, "match_config %d %511s %d %d %127s", &node_id, number_esc, &op, &unit, field_esc);
+            int parsed = sscanf(line, "%*s %d %511s %d %d %127s", &node_id, number_esc, &op, &unit, field_esc);
             if (parsed < 4) {
                 continue;
             }
             Node *n = FindNode(graph, node_id);
-            if (!n || n->type != NODE_MATCH) {
+            if (!n || n->type != NODE_FILTER) {
                 continue;
             }
             unescape(number_esc, n->number_parameter, sizeof(n->number_parameter));
