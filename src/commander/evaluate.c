@@ -12,6 +12,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 typedef struct {
@@ -167,20 +168,75 @@ static bool EvaluateWhere(GraphContext *graph, Node *node, Port *source, Port *o
 
 static long double NumericValue(const StreamValue *value) {
     if (!value) return 0;
-    if (value->type == VALUE_INT || value->type == VALUE_DATETIME) return value->as.integer;
+    if (value->type == VALUE_INT) return value->as.integer;
+    if (value->type == VALUE_DATETIME) return value->as.datetime;
     if (value->type == VALUE_SIZE) return value->as.file_size;
     return 0;
 }
 
-static bool EvaluateNumberFilter(GraphContext *graph, Node *node, Port *source, Port *output) {
-    char *end;
-    long double threshold = strtold(node->number_parameter, &end);
-    if (*node->number_parameter == '\0' || *end != '\0') {
-        snprintf(graph->status, sizeof(graph->status), "Match: invalid threshold '%s'", node->number_parameter);
-        graph->evaluation_error = true;
+static bool DateTimeTextConsumed(const char *text) {
+    while (*text && isspace((unsigned char)*text)) {
+        text++;
+    }
+    return *text == '\0';
+}
+
+// Dates use local time, matching ValueDisplayText(). A date without a time is
+// interpreted as midnight at the start of that day.
+static bool ParseDateTimeThreshold(const char *text, long double *threshold) {
+    int year = 0, month = 0, day = 0;
+    int hour = 0, minute = 0;
+    int consumed = 0;
+    int matched = sscanf(text, "%d-%d-%d %d:%d%n", &year, &month, &day, &hour, &minute, &consumed);
+    if (matched != 5 || !DateTimeTextConsumed(text + consumed)) {
+        hour = 0;
+        minute = 0;
+        consumed = 0;
+        matched = sscanf(text, "%d-%d-%d%n", &year, &month, &day, &consumed);
+        if (matched != 3 || !DateTimeTextConsumed(text + consumed)) {
+            return false;
+        }
+    }
+    if (year < 1900 || month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 ||
+        minute > 59) {
         return false;
     }
+
+    struct tm local = {
+        .tm_year = year - 1900,
+        .tm_mon = month - 1,
+        .tm_mday = day,
+        .tm_hour = hour,
+        .tm_min = minute,
+        .tm_isdst = -1,
+    };
+    time_t timestamp = mktime(&local);
+    if (timestamp == (time_t)-1 || local.tm_year != year - 1900 || local.tm_mon != month - 1 ||
+        local.tm_mday != day || local.tm_hour != hour || local.tm_min != minute) {
+        return false;
+    }
+    *threshold = (long double)timestamp;
+    return true;
+}
+
+static bool EvaluateNumberFilter(GraphContext *graph, Node *node, Port *source, Port *output) {
     ValueType field_type = NodeSelectedFieldType(graph, node);
+    long double threshold = 0;
+    if (field_type == VALUE_DATETIME) {
+        if (!ParseDateTimeThreshold(node->number_parameter, &threshold)) {
+            snprintf(graph->status, sizeof(graph->status), "Match: use date YYYY-MM-DD or YYYY-MM-DD HH:MM");
+            graph->evaluation_error = true;
+            return false;
+        }
+    } else {
+        char *end;
+        threshold = strtold(node->number_parameter, &end);
+        if (*node->number_parameter == '\0' || *end != '\0') {
+            snprintf(graph->status, sizeof(graph->status), "Match: invalid threshold '%s'", node->number_parameter);
+            graph->evaluation_error = true;
+            return false;
+        }
+    }
     if (field_type == VALUE_SIZE) {
         static const unsigned long long multipliers[] = {1ULL, 1024ULL, 1024ULL * 1024ULL,
                                                          1024ULL * 1024ULL * 1024ULL,

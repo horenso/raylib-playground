@@ -19,6 +19,9 @@ static bool MouseOverNodeTextBox(GraphContext *graph, Vector2 mouse) {
         if (NodeUsesFieldSelector(node) && CheckCollisionPointRec(mouse, FieldSelectorButtonBounds(graph, node))) {
             continue;
         }
+        if (node->type == NODE_MATCH && !InputSourcePort(graph, node, 0)) {
+            continue;
+        }
 
         float text_box_y = NODE_HEADER_HEIGHT + 16.0f;
         if (node->type == NODE_MATCH) {
@@ -85,52 +88,48 @@ static InteractionMode ResolveInteractionMode(GraphContext *graph, bool panning)
     return INTERACTION_IDLE;
 }
 
-// Handles field menus before the canvas sees the click. This
-// keeps clicks on menu rows from dragging nodes or activating controls beneath it.
-static bool UpdateFieldDropdown(GraphContext *graph, Vector2 mouse) {
+static void CloseNodeDropdowns(GraphContext *graph) {
+    for (int i = 0; i < graph->node_count; i++) {
+        graph->nodes[i].field_dropdown_open = false;
+        graph->nodes[i].unit_dropdown_open = false;
+    }
+}
+
+// Dropdowns form one modal overlay layer. Resolve an open popup before testing
+// any underlying buttons, then open controls in the same front-to-back order in
+// which nodes are rendered.
+static bool UpdateNodeDropdowns(GraphContext *graph, Vector2 mouse) {
     bool pressed = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
     bool released = IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
 
-    // Buttons are checked first so one click can switch directly between menus.
-    if (pressed) {
-        for (int i = graph->node_count - 1; i >= 0; i--) {
-            Node *node = &graph->nodes[i];
-            const char *options[MAX_FIELDS];
-            int option_count = CollectNodeFieldOptions(graph, node, options, MAX_FIELDS);
-            if (option_count <= 0 || !CheckCollisionPointRec(mouse, FieldSelectorButtonBounds(graph, node))) {
-                continue;
-            }
-            bool open = !node->field_dropdown_open;
-            for (int other = 0; other < graph->node_count; other++) {
-                graph->nodes[other].field_dropdown_open = false;
-                graph->nodes[other].unit_dropdown_open = false;
-            }
-            node->field_dropdown_open = open;
-            if (open) {
-                graph->selected_node_id = node->id;
-                BringNodeToFront(graph, node->id);
-            }
-            return true;
+    // A unit selector is only meaningful while the selected field is a size.
+    for (int i = 0; i < graph->node_count; i++) {
+        Node *node = &graph->nodes[i];
+        if (node->unit_dropdown_open &&
+            (node->type != NODE_MATCH || NodeSelectedFieldType(graph, node) != VALUE_SIZE)) {
+            node->unit_dropdown_open = false;
         }
     }
 
+    // Only one popup can be open. Handle it before controls behind the popup.
     for (int i = graph->node_count - 1; i >= 0; i--) {
         Node *node = &graph->nodes[i];
-        if (!NodeUsesFieldSelector(node)) {
-            continue;
-        }
-
-        Rectangle button = FieldSelectorButtonBounds(graph, node);
-        const char *options[MAX_FIELDS];
-        int option_count = CollectNodeFieldOptions(graph, node, options, MAX_FIELDS);
-
         if (node->field_dropdown_open) {
+            Rectangle button = FieldSelectorButtonBounds(graph, node);
+            const char *options[MAX_FIELDS];
+            int option_count = CollectNodeFieldOptions(graph, node, options, MAX_FIELDS);
+            if (pressed && CheckCollisionPointRec(mouse, button)) {
+                node->field_dropdown_open = false;
+                return true;
+            }
             for (int option = 0; option < option_count; option++) {
                 Rectangle item = {button.x, button.y + button.height * (option + 1), button.width, button.height};
                 if (CheckCollisionPointRec(mouse, item)) {
                     if (released) {
                         if (!TextIsEqual(node->field_name, options[option])) {
+                            ValueType previous_type = NodeSelectedFieldType(graph, node);
                             TextCopy(node->field_name, options[option]);
+                            MatchFieldTypeChanged(node, previous_type, NodeSelectedFieldType(graph, node));
                             MarkNodeDirty(graph, node->id);
                             TextCopy(graph->status, "Field selection changed - downstream schemas updated");
                         }
@@ -143,43 +142,58 @@ static bool UpdateFieldDropdown(GraphContext *graph, Vector2 mouse) {
                 node->field_dropdown_open = false;
                 return true;
             }
+            return false;
         }
-    }
-    return false;
-}
-
-static bool UpdateSizeUnitDropdown(GraphContext *graph, Vector2 mouse) {
-    bool pressed = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
-    bool released = IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
-    for (int i = graph->node_count - 1; i >= 0; i--) {
-        Node *node = &graph->nodes[i];
-        if (node->type != NODE_MATCH || NodeSelectedFieldType(graph, node) != VALUE_SIZE) {
-            node->unit_dropdown_open = false;
-            continue;
-        }
-        Rectangle button = SizeUnitButtonBounds(graph, node);
-        if (pressed && CheckCollisionPointRec(mouse, button)) {
-            node->unit_dropdown_open = !node->unit_dropdown_open;
-            node->field_dropdown_open = false;
-            return true;
-        }
-        if (!node->unit_dropdown_open) {
-            continue;
-        }
-        for (int unit = FILE_SIZE_BYTES; unit <= FILE_SIZE_TB; unit++) {
-            Rectangle item = {button.x, button.y + button.height * (unit + 1), button.width, button.height};
-            if (CheckCollisionPointRec(mouse, item)) {
-                if (released) {
-                    node->file_size_unit = (FileSizeUnit)unit;
-                    node->unit_dropdown_open = false;
-                    MarkNodeDirty(graph, node->id);
-                }
+        if (node->unit_dropdown_open) {
+            Rectangle button = SizeUnitButtonBounds(graph, node);
+            if (pressed && CheckCollisionPointRec(mouse, button)) {
+                node->unit_dropdown_open = false;
                 return true;
             }
+            for (int unit = FILE_SIZE_BYTES; unit <= FILE_SIZE_TB; unit++) {
+                Rectangle item = {button.x, button.y + button.height * (unit + 1), button.width, button.height};
+                if (CheckCollisionPointRec(mouse, item)) {
+                    if (released) {
+                        node->file_size_unit = (FileSizeUnit)unit;
+                        node->unit_dropdown_open = false;
+                        MarkNodeDirty(graph, node->id);
+                    }
+                    return true;
+                }
+            }
+            if (pressed) {
+                node->unit_dropdown_open = false;
+                return true;
+            }
+            return false;
         }
-        if (pressed) {
-            node->unit_dropdown_open = false;
+    }
+
+    if (!pressed) {
+        return false;
+    }
+
+    for (int i = graph->node_count - 1; i >= 0; i--) {
+        Node *node = &graph->nodes[i];
+        if (node->type == NODE_MATCH && NodeSelectedFieldType(graph, node) == VALUE_SIZE &&
+            CheckCollisionPointRec(mouse, SizeUnitButtonBounds(graph, node))) {
+            CloseNodeDropdowns(graph);
+            node->unit_dropdown_open = true;
+            graph->selected_node_id = node->id;
+            BringNodeToFront(graph, node->id);
             return true;
+        }
+
+        if (NodeUsesFieldSelector(node)) {
+            const char *options[MAX_FIELDS];
+            int option_count = CollectNodeFieldOptions(graph, node, options, MAX_FIELDS);
+            if (option_count > 0 && CheckCollisionPointRec(mouse, FieldSelectorButtonBounds(graph, node))) {
+                CloseNodeDropdowns(graph);
+                node->field_dropdown_open = true;
+                graph->selected_node_id = node->id;
+                BringNodeToFront(graph, node->id);
+                return true;
+            }
         }
     }
     return false;
@@ -256,13 +270,9 @@ void UpdateCanvas(GraphContext *graph) {
     }
 
     Vector2 mouse = GetMousePosition();
-    bool field_dropdown_owns_mouse = UpdateFieldDropdown(graph, mouse);
-    bool unit_dropdown_owns_mouse = UpdateSizeUnitDropdown(graph, mouse);
+    bool dropdown_owns_mouse = UpdateNodeDropdowns(graph, mouse);
     if (IsKeyPressed(KEY_ESCAPE)) {
-        for (int i = 0; i < graph->node_count; i++) {
-            graph->nodes[i].field_dropdown_open = false;
-            graph->nodes[i].unit_dropdown_open = false;
-        }
+        CloseNodeDropdowns(graph);
     }
     bool in_canvas = mouse.y > ToolbarHeight(graph) && mouse.y < GetScreenHeight() - StatusHeight(graph);
     bool panning =
@@ -330,7 +340,7 @@ void UpdateCanvas(GraphContext *graph) {
         }
     }
 
-    if (!field_dropdown_owns_mouse && !unit_dropdown_owns_mouse && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && in_canvas &&
+    if (!dropdown_owns_mouse && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && in_canvas &&
         graph->interaction_mode == INTERACTION_IDLE) {
         int output = PortAtMouse(graph, mouse, PORT_DIR_OUTPUT);
         int input = PortAtMouse(graph, mouse, PORT_DIR_INPUT);

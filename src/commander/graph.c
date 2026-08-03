@@ -7,6 +7,7 @@
 
 #include <math.h>
 #include <string.h>
+#include <time.h>
 
 Node *FindNode(GraphContext *graph, int id) {
     for (int i = 0; i < graph->node_count; i++) {
@@ -332,6 +333,22 @@ static void SetSchemaError(Node *node, const char *message) {
     TextCopy(node->schema_error_message, message);
 }
 
+void MatchFieldTypeChanged(Node *node, ValueType previous_type, ValueType selected_type) {
+    if (!node || node->type != NODE_MATCH || selected_type != VALUE_DATETIME) {
+        return;
+    }
+    if (previous_type != VALUE_DATETIME || !node->number_parameter[0] || TextIsEqual(node->number_parameter, "0")) {
+        time_t now = time(NULL);
+        struct tm local = {0};
+        if (localtime_r(&now, &local)) {
+            strftime(node->number_parameter, sizeof(node->number_parameter), "%Y-%m-%d %H:%M", &local);
+        }
+    }
+    if (node->number_filter_op != NUMBER_FILTER_LT && node->number_filter_op != NUMBER_FILTER_GTE) {
+        node->number_filter_op = NUMBER_FILTER_GTE;
+    }
+}
+
 static const FieldSchema *ChooseDefaultField(Node *node, const Port *input) {
     if (input->data_type != VALUE_RECORD) {
         if (!node->field_name[0]) {
@@ -471,6 +488,7 @@ void PropagateSchemas(GraphContext *graph) {
             if (!input || !output || !input->schema_valid) {
                 continue;
             }
+            ValueType previous_type = NodeSelectedFieldType(graph, node);
             const FieldSchema *selected = ChooseDefaultField(node, input);
             ValueType selected_type = input->data_type;
             if (input->data_type == VALUE_RECORD) {
@@ -483,6 +501,8 @@ void PropagateSchemas(GraphContext *graph) {
                 SetSchemaError(node, "Primitive streams expose only the Item field");
                 continue;
             }
+
+            MatchFieldTypeChanged(node, previous_type, selected_type);
 
             if (node->type == NODE_MATCH && !ValueTypeIsText(selected_type) && !ValueTypeIsNumeric(selected_type)) {
                 SetSchemaError(node, "Match requires a String or numeric field");

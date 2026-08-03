@@ -12,7 +12,7 @@
 #include <stdio.h>
 
 int main(int argc, char **argv) {
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_HIGHDPI);
     InitWindow(1280, 760, "Commander - visual dataflow shell");
     SetExitKey(KEY_NULL);
     SetWindowMinSize(900, 560);
@@ -87,6 +87,12 @@ int main(int argc, char **argv) {
         for (int i = 0; i < graph.node_count; i++) {
             DrawNode(&graph, &graph.nodes[i]);
         }
+
+        // Popups are a separate canvas layer. Drawing them after every node keeps
+        // them above controls in their owner and above neighboring nodes.
+        for (int i = 0; i < graph.node_count; i++) {
+            DrawNodeOverlay(&graph, &graph.nodes[i]);
+        }
         if (graph.knife_active) {
             DrawKnife(&graph, graph.knife_start, GetMousePosition());
         }
@@ -108,6 +114,7 @@ int main(int argc, char **argv) {
             !FindInspectorWindow(&graph, hovered_output)) {
             DrawPortHoverPreview(&graph, hovered_output);
         }
+        DrawPortTypeTooltip(&graph);
 
         DrawToolbar(&graph);
         DrawStatusBar(&graph);

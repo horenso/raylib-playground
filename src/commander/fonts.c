@@ -14,53 +14,59 @@
 
 #define ASCII_FIRST 32
 #define ASCII_GLYPH_COUNT 95
-#define FONT_CACHE_CAPACITY 96
+#define LATIN1_FIRST 160
+#define LATIN1_GLYPH_COUNT 96
+#define FONT_GLYPH_COUNT (ASCII_GLYPH_COUNT + LATIN1_GLYPH_COUNT)
+#define FONT_CACHE_CAPACITY 128
+
+typedef enum {
+    FONT_FAMILY_UI,
+    FONT_FAMILY_MONO,
+} FontFamily;
 
 typedef struct {
+    FontFamily family;
     int pixel_size;
     Font font;
 } CachedFont;
 
 InterfaceFonts fonts = {0};
 static FT_Library ft_library = NULL;
-static FT_Face ft_face = NULL;
+static FT_Face ft_ui_face = NULL;
+static FT_Face ft_mono_face = NULL;
 static CachedFont font_cache[FONT_CACHE_CAPACITY] = {0};
 static int font_cache_count = 0;
 
 float ScaledFontSize(float size, float scale) { return floorf(size * scale + 0.5f); }
 
-static Font LoadFreeTypeFont(int pixel_size) {
+static Font LoadFreeTypeFont(FT_Face face, int pixel_size) {
     Font font = {0};
-    if (!ft_face || FT_Set_Pixel_Sizes(ft_face, 0, (FT_UInt)pixel_size) != 0) {
+    if (!face || FT_Set_Pixel_Sizes(face, 0, (FT_UInt)pixel_size) != 0) {
         return font;
     }
 
-    GlyphInfo *glyphs = MemAlloc(ASCII_GLYPH_COUNT * sizeof(*glyphs));
+    GlyphInfo *glyphs = MemAlloc(FONT_GLYPH_COUNT * sizeof(*glyphs));
     if (!glyphs) {
         return font;
     }
-    memset(glyphs, 0, ASCII_GLYPH_COUNT * sizeof(*glyphs));
+    memset(glyphs, 0, FONT_GLYPH_COUNT * sizeof(*glyphs));
 
-    int ascent = (int)((ft_face->size->metrics.ascender + 32) >> 6);
-    int advance = (int)((ft_face->size->metrics.max_advance + 32) >> 6);
-    if (FT_Load_Char(ft_face, 'M', FT_LOAD_DEFAULT | FT_LOAD_TARGET_LIGHT) == 0) {
-        advance = (int)((ft_face->glyph->advance.x + 32) >> 6);
-    }
+    int ascent = (int)((face->size->metrics.ascender + 32) >> 6);
 
     bool complete = true;
-    for (int i = 0; i < ASCII_GLYPH_COUNT; i++) {
-        int codepoint = ASCII_FIRST + i;
+    for (int i = 0; i < FONT_GLYPH_COUNT; i++) {
+        int codepoint = i < ASCII_GLYPH_COUNT ? ASCII_FIRST + i : LATIN1_FIRST + i - ASCII_GLYPH_COUNT;
         glyphs[i].value = codepoint;
-        glyphs[i].advanceX = advance;
 
-        if (FT_Load_Char(ft_face, (FT_ULong)codepoint, FT_LOAD_DEFAULT | FT_LOAD_TARGET_LIGHT) != 0 ||
-            FT_Render_Glyph(ft_face->glyph, FT_RENDER_MODE_NORMAL) != 0) {
+        if (FT_Load_Char(face, (FT_ULong)codepoint, FT_LOAD_DEFAULT | FT_LOAD_TARGET_LIGHT) != 0 ||
+            FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL) != 0) {
             complete = false;
             break;
         }
 
-        FT_GlyphSlot slot = ft_face->glyph;
+        FT_GlyphSlot slot = face->glyph;
         FT_Bitmap *bitmap = &slot->bitmap;
+        glyphs[i].advanceX = (int)((slot->advance.x + 32) >> 6);
         glyphs[i].offsetX = slot->bitmap_left;
         glyphs[i].offsetY = ascent - slot->bitmap_top;
         glyphs[i].image = (Image){
@@ -89,14 +95,14 @@ static Font LoadFreeTypeFont(int pixel_size) {
     }
 
     if (!complete) {
-        UnloadFontData(glyphs, ASCII_GLYPH_COUNT);
+        UnloadFontData(glyphs, FONT_GLYPH_COUNT);
         return font;
     }
 
     Rectangle *recs = NULL;
-    Image atlas = GenImageFontAtlas(glyphs, &recs, ASCII_GLYPH_COUNT, pixel_size, 1, 0);
+    Image atlas = GenImageFontAtlas(glyphs, &recs, FONT_GLYPH_COUNT, pixel_size, 2, 0);
     if (!atlas.data || !recs) {
-        UnloadFontData(glyphs, ASCII_GLYPH_COUNT);
+        UnloadFontData(glyphs, FONT_GLYPH_COUNT);
         if (atlas.data) {
             UnloadImage(atlas);
         }
@@ -105,92 +111,127 @@ static Font LoadFreeTypeFont(int pixel_size) {
 
     font = (Font){
         .baseSize = pixel_size,
-        .glyphCount = ASCII_GLYPH_COUNT,
-        .glyphPadding = 1,
+        .glyphCount = FONT_GLYPH_COUNT,
+        .glyphPadding = 2,
         .texture = LoadTextureFromImage(atlas),
         .recs = recs,
         .glyphs = glyphs,
     };
     UnloadImage(atlas);
 
-    // FreeType already produced the antialiased coverage at the exact target
-    // size. Point sampling preserves those hinted pixels without another
-    // filtering pass.
-    SetTextureFilter(font.texture, TEXTURE_FILTER_POINT);
+    // Linear sampling keeps glyph edges stable when DPI or canvas zoom causes
+    // a fractional texture-to-screen ratio.
+    SetTextureFilter(font.texture, TEXTURE_FILTER_BILINEAR);
     return font;
 }
 
-static Font FontForPixelSize(int pixel_size) {
+static Font FontForPixelSize(FontFamily family, int pixel_size) {
     if (pixel_size < 1) {
         pixel_size = 1;
     }
     for (int i = 0; i < font_cache_count; i++) {
-        if (font_cache[i].pixel_size == pixel_size) {
+        if (font_cache[i].family == family && font_cache[i].pixel_size == pixel_size) {
             return font_cache[i].font;
         }
     }
-    if (!ft_face || font_cache_count >= FONT_CACHE_CAPACITY) {
+    FT_Face face = family == FONT_FAMILY_MONO ? ft_mono_face : ft_ui_face;
+    if (!face) {
+        face = family == FONT_FAMILY_MONO ? ft_ui_face : ft_mono_face;
+    }
+    if (!face || font_cache_count >= FONT_CACHE_CAPACITY) {
         return GetFontDefault();
     }
 
-    Font font = LoadFreeTypeFont(pixel_size);
+    Font font = LoadFreeTypeFont(face, pixel_size);
     if (font.texture.id == 0) {
         return GetFontDefault();
     }
-    font_cache[font_cache_count++] = (CachedFont){.pixel_size = pixel_size, .font = font};
+    font_cache[font_cache_count++] = (CachedFont){.family = family, .pixel_size = pixel_size, .font = font};
     return font;
 }
 
 void UpdateInterfaceFontScale(float application_scale, float canvas_scale) {
+    Vector2 dpi = GetWindowScaleDPI();
+    float dpi_scale = fmaxf(dpi.x, dpi.y);
+    if (dpi_scale < 1.0f) {
+        dpi_scale = 1.0f;
+    }
     int title_size = (int)ScaledFontSize(TITLE_TEXT_SIZE, canvas_scale);
     int body_size = (int)ScaledFontSize(BODY_TEXT_SIZE, application_scale);
     int small_size = (int)ScaledFontSize(11.0f, application_scale);
+    int mono_size = body_size;
     int gui_size = (int)ScaledFontSize(GUI_TEXT_SIZE, application_scale);
     int node_body_size = (int)ScaledFontSize(BODY_TEXT_SIZE, canvas_scale);
     int node_small_size = (int)ScaledFontSize(BODY_TEXT_SIZE * 0.85f, canvas_scale);
+    int node_mono_size = node_body_size;
     int node_gui_size = (int)ScaledFontSize(GUI_TEXT_SIZE, canvas_scale);
 
     if (title_size == fonts.title_size && body_size == fonts.body_size && small_size == fonts.small_size &&
-        gui_size == fonts.gui_size && node_body_size == fonts.node_body_size &&
-        node_small_size == fonts.node_small_size && node_gui_size == fonts.node_gui_size) {
+        mono_size == fonts.mono_size && gui_size == fonts.gui_size && node_body_size == fonts.node_body_size &&
+        node_small_size == fonts.node_small_size && node_mono_size == fonts.node_mono_size &&
+        node_gui_size == fonts.node_gui_size && fabsf(dpi_scale - fonts.dpi_scale) < 0.01f) {
         return;
     }
 
-    fonts.title = FontForPixelSize(title_size);
-    fonts.body = FontForPixelSize(body_size);
-    fonts.small = FontForPixelSize(small_size);
-    fonts.gui = FontForPixelSize(gui_size);
-    fonts.node_body = FontForPixelSize(node_body_size);
-    fonts.node_small = FontForPixelSize(node_small_size);
-    fonts.node_gui = FontForPixelSize(node_gui_size);
+    fonts.title = FontForPixelSize(FONT_FAMILY_UI, (int)ScaledFontSize(title_size, dpi_scale));
+    fonts.body = FontForPixelSize(FONT_FAMILY_UI, (int)ScaledFontSize(body_size, dpi_scale));
+    fonts.small = FontForPixelSize(FONT_FAMILY_UI, (int)ScaledFontSize(small_size, dpi_scale));
+    fonts.mono = FontForPixelSize(FONT_FAMILY_MONO, (int)ScaledFontSize(mono_size, dpi_scale));
+    fonts.gui = FontForPixelSize(FONT_FAMILY_UI, (int)ScaledFontSize(gui_size, dpi_scale));
+    fonts.node_body = FontForPixelSize(FONT_FAMILY_UI, (int)ScaledFontSize(node_body_size, dpi_scale));
+    fonts.node_small = FontForPixelSize(FONT_FAMILY_UI, (int)ScaledFontSize(node_small_size, dpi_scale));
+    fonts.node_mono = FontForPixelSize(FONT_FAMILY_MONO, (int)ScaledFontSize(node_mono_size, dpi_scale));
+    fonts.node_gui = FontForPixelSize(FONT_FAMILY_MONO, (int)ScaledFontSize(node_gui_size, dpi_scale));
     fonts.title_size = title_size;
     fonts.body_size = body_size;
     fonts.small_size = small_size;
+    fonts.mono_size = mono_size;
     fonts.gui_size = gui_size;
     fonts.node_body_size = node_body_size;
     fonts.node_small_size = node_small_size;
+    fonts.node_mono_size = node_mono_size;
     fonts.node_gui_size = node_gui_size;
+    fonts.dpi_scale = dpi_scale;
     GuiSetFont(fonts.gui);
 }
 
 void LoadInterfaceFonts(void) {
-    const char *candidates[] = {
+    const char *ui_candidates[] = {
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/ubuntu/UbuntuSans[wdth,wght].ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+    };
+    const char *mono_candidates[] = {
+        "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
         "/usr/share/fonts/truetype/noto/NotoMono-Regular.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
         "/usr/share/fonts/truetype/liberation2/LiberationMono-Regular.ttf",
     };
-    const char *path = NULL;
-    for (int i = 0; i < (int)(sizeof(candidates) / sizeof(candidates[0])); i++) {
-        if (FileExists(candidates[i])) {
-            path = candidates[i];
+    const char *ui_path = NULL;
+    const char *mono_path = NULL;
+    for (int i = 0; i < (int)(sizeof(ui_candidates) / sizeof(ui_candidates[0])); i++) {
+        if (FileExists(ui_candidates[i])) {
+            ui_path = ui_candidates[i];
+            break;
+        }
+    }
+    for (int i = 0; i < (int)(sizeof(mono_candidates) / sizeof(mono_candidates[0])); i++) {
+        if (FileExists(mono_candidates[i])) {
+            mono_path = mono_candidates[i];
             break;
         }
     }
 
-    if (path && FT_Init_FreeType(&ft_library) == 0 && FT_New_Face(ft_library, path, 0, &ft_face) == 0) {
-        FT_Select_Charmap(ft_face, FT_ENCODING_UNICODE);
-        fonts.custom_loaded = true;
+    if (FT_Init_FreeType(&ft_library) == 0) {
+        if (ui_path && FT_New_Face(ft_library, ui_path, 0, &ft_ui_face) == 0) {
+            FT_Select_Charmap(ft_ui_face, FT_ENCODING_UNICODE);
+        }
+        if (mono_path && FT_New_Face(ft_library, mono_path, 0, &ft_mono_face) == 0) {
+            FT_Select_Charmap(ft_mono_face, FT_ENCODING_UNICODE);
+        }
+        fonts.custom_loaded = ft_ui_face || ft_mono_face;
     }
 
     UpdateInterfaceFontScale(UI_BASE_PIXEL_SIZE, UI_BASE_PIXEL_SIZE);
@@ -202,9 +243,13 @@ void UnloadInterfaceFonts(void) {
         UnloadFont(font_cache[i].font);
     }
     font_cache_count = 0;
-    if (ft_face) {
-        FT_Done_Face(ft_face);
-        ft_face = NULL;
+    if (ft_ui_face) {
+        FT_Done_Face(ft_ui_face);
+        ft_ui_face = NULL;
+    }
+    if (ft_mono_face) {
+        FT_Done_Face(ft_mono_face);
+        ft_mono_face = NULL;
     }
     if (ft_library) {
         FT_Done_FreeType(ft_library);
@@ -216,6 +261,44 @@ void DrawInterfaceText(Font font, const char *text, float x, float y, float size
     DrawTextEx(font, text, (Vector2){floorf(x + 0.5f), floorf(y + 0.5f)}, size, 0, color);
 }
 
+UiTextStyle GetUiTextStyle(TextRole role, bool canvas) {
+    UiTextStyle style = {0};
+    switch (role) {
+    case TEXT_ROLE_TITLE:
+        style.font = fonts.title;
+        style.size = (float)fonts.title_size;
+        break;
+    case TEXT_ROLE_CODE:
+        style.font = canvas ? fonts.node_mono : fonts.mono;
+        style.size = (float)(canvas ? fonts.node_mono_size : fonts.mono_size);
+        break;
+    case TEXT_ROLE_LABEL:
+    case TEXT_ROLE_CAPTION:
+        style.font = canvas ? fonts.node_small : fonts.small;
+        style.size = (float)(canvas ? fonts.node_small_size : fonts.small_size);
+        break;
+    case TEXT_ROLE_BODY:
+    default:
+        style.font = canvas ? fonts.node_body : fonts.body;
+        style.size = (float)(canvas ? fonts.node_body_size : fonts.body_size);
+        break;
+    }
+    style.line_height = floorf(style.size * 1.4f + 0.5f);
+    return style;
+}
+
+void DrawUiText(TextRole role, bool canvas, const char *text, float x, float y, Color color) {
+    UiTextStyle style = GetUiTextStyle(role, canvas);
+    DrawInterfaceText(style.font, text, x, y, style.size, color);
+}
+
+Vector2 MeasureUiText(TextRole role, bool canvas, const char *text) {
+    UiTextStyle style = GetUiTextStyle(role, canvas);
+    Vector2 measured = MeasureTextEx(style.font, text, style.size, 0);
+    measured.y = style.line_height;
+    return measured;
+}
+
 void SetGuiScale(float scale) {
     GuiSetFont(fonts.gui);
     GuiSetStyle(DEFAULT, TEXT_SIZE, (int)ScaledFontSize(GUI_TEXT_SIZE, scale));
@@ -223,6 +306,11 @@ void SetGuiScale(float scale) {
     GuiSetStyle(LISTVIEW, LIST_ITEMS_HEIGHT, (int)(24.0f * scale + 0.5f));
     GuiSetStyle(LISTVIEW, SCROLLBAR_WIDTH, (int)(14.0f * scale + 0.5f));
     GuiSetIconScale(scale >= 1.5f ? 2 : 1);
+}
+
+void SetCodeGuiScale(float scale) {
+    SetGuiScale(scale);
+    GuiSetFont(fonts.mono);
 }
 
 void SetNodeGuiScale(float scale) {
