@@ -165,7 +165,7 @@ bool LoadGraph(GraphContext *graph, const char *path) {
                 // Backward compat: old files saved integer type codes
                 char *endp;
                 long val = strtol(type_str, &endp, 10);
-                if (*endp == '\0' && val >= 0 && val <= NODE_LEGACY_NUMBER_FILTER) {
+                if (*endp == '\0' && val >= 0 && val <= NODE_CSV) {
                     type_int = (int)val;
                 }
             }
@@ -235,6 +235,7 @@ bool LoadGraph(GraphContext *graph, const char *path) {
                    &p->relative_pos.y);
             p->data_type = (PortDataType)dtype;
             p->direction = (PortDirection)dir;
+            p->schema_valid = p->direction == PORT_DIR_OUTPUT && p->data_type != VALUE_NONE;
             unescape(name_esc, p->name, sizeof(p->name));
 
             Node *n = NULL;
@@ -289,6 +290,7 @@ bool LoadGraph(GraphContext *graph, const char *path) {
         }
     }
 
+    PropagateSchemas(graph);
     fclose(f);
     return true;
 }

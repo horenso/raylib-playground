@@ -14,6 +14,8 @@ const char *ValueTypeName(ValueType type) {
         return "Bool";
     case VALUE_INT:
         return "Int";
+    case VALUE_FLOAT:
+        return "Float";
     case VALUE_SIZE:
         return "Size";
     case VALUE_DATETIME:
@@ -28,7 +30,7 @@ const char *ValueTypeName(ValueType type) {
 bool ValueTypeIsText(ValueType type) { return type == VALUE_STRING; }
 
 bool ValueTypeIsNumeric(ValueType type) {
-    return type == VALUE_INT || type == VALUE_SIZE || type == VALUE_DATETIME;
+    return type == VALUE_INT || type == VALUE_FLOAT || type == VALUE_SIZE || type == VALUE_DATETIME;
 }
 
 int SchemaFieldIndex(const RecordSchema *schema, const char *name) {
@@ -85,6 +87,9 @@ const char *ValueDisplayText(const StreamValue *value, char *buffer, int buffer_
         return value->as.boolean ? "true" : "false";
     case VALUE_INT:
         snprintf(buffer, (size_t)buffer_size, "%lld", value->as.integer);
+        return buffer;
+    case VALUE_FLOAT:
+        snprintf(buffer, (size_t)buffer_size, "%.15g", value->as.floating);
         return buffer;
     case VALUE_SIZE: {
         double size = (double)value->as.file_size;

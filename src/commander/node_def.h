@@ -49,6 +49,11 @@ typedef struct {
     // NULL means the output schema is fixed (set once during init).
     bool (*propagate_schema)(Node *node, Port *input, Port *output, ValueType selected_type);
 
+    // Refresh an intrinsic source schema before schemas are propagated. This
+    // is useful when a source's record shape comes from external data, such
+    // as the header of a CSV file. NULL means the source schema is static.
+    void (*refresh_source_schema)(GraphContext *graph, Node *node, Port *output);
+
     // ---------- Field-selector UI -----------------------------------------
 
     // True if this node shows a field-selector dropdown button.

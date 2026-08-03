@@ -96,6 +96,9 @@ static long double NumericValue(const StreamValue *value) {
     if (value->type == VALUE_INT) {
         return value->as.integer;
     }
+    if (value->type == VALUE_FLOAT) {
+        return value->as.floating;
+    }
     if (value->type == VALUE_DATETIME) {
         return value->as.datetime;
     }

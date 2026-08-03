@@ -34,6 +34,7 @@ Color PortColor(PortDataType type) {
         return (Color){102, 198, 160, 255};
     case VALUE_SIZE:
     case VALUE_INT:
+    case VALUE_FLOAT:
         return (Color){180, 132, 230, 255};
     default:
         return COLOR_STRING_LIST;
@@ -399,6 +400,17 @@ void PropagateSchemas(GraphContext *graph) {
                 output->data_type = VALUE_NONE;
                 memset(&output->schema, 0, sizeof(output->schema));
             }
+        }
+    }
+
+    // Some source schemas are derived from external data rather than being
+    // fixed at node creation time (for example, CSV column headers).
+    for (int i = 0; i < graph->node_count; i++) {
+        Node *node = &graph->nodes[i];
+        const NodeDef *def = GetNodeDef(node->type);
+        Port *output = NodeOutputPort(graph, node, 0);
+        if (def && def->refresh_source_schema && output) {
+            def->refresh_source_schema(graph, node, output);
         }
     }
 

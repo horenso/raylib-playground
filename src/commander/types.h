@@ -39,6 +39,7 @@ typedef enum {
     VALUE_SIZE,
     VALUE_DATETIME,
     VALUE_RECORD,
+    VALUE_FLOAT,
 } ValueType;
 
 // Ports always carry streams. The type describes one item in the stream;
@@ -64,6 +65,7 @@ typedef struct {
         char text[MAX_PATH_LENGTH];
         bool boolean;
         long long integer;
+        double floating;
         unsigned long long file_size;
         long long datetime;
     } as;
@@ -86,6 +88,7 @@ typedef enum {
     NODE_INSERT,
     NODE_GET,
     NODE_LEGACY_NUMBER_FILTER,
+    NODE_CSV,
 } NodeType;
 
 typedef enum {

@@ -51,20 +51,25 @@ static void AppendDirectoryEntries(Node *node, Port *output, FilePathList entrie
 // Init
 // ============================================================
 
+static void RefreshFilesSchema(GraphContext *graph, Node *node, Port *output) {
+    (void)graph;
+    (void)node;
+    output->data_type = VALUE_RECORD;
+    output->schema_valid = true;
+    memset(&output->schema, 0, sizeof(output->schema));
+    SchemaAddField(&output->schema, "path", VALUE_STRING, false);
+    SchemaAddField(&output->schema, "name", VALUE_STRING, false);
+    SchemaAddField(&output->schema, "type", VALUE_STRING, false);
+    SchemaAddField(&output->schema, "size", VALUE_SIZE, false);
+    SchemaAddField(&output->schema, "modified", VALUE_DATETIME, false);
+}
+
 static void InitFiles(GraphContext *graph, Node *node) {
     TextCopy(node->title, "Files");
     TextCopy(node->parameter, ".");
     node->directory_entry_type = DIRECTORY_ENTRY_FILES;
     node->bounds.height = 220;
     AddPort(graph, node, "Rows", VALUE_RECORD, PORT_DIR_OUTPUT, 112);
-    Port *out = NodeOutputPort(graph, node, 0);
-    if (out) {
-        SchemaAddField(&out->schema, "path", VALUE_STRING, false);
-        SchemaAddField(&out->schema, "name", VALUE_STRING, false);
-        SchemaAddField(&out->schema, "type", VALUE_STRING, false);
-        SchemaAddField(&out->schema, "size", VALUE_SIZE, false);
-        SchemaAddField(&out->schema, "modified", VALUE_DATETIME, false);
-    }
 }
 
 // ============================================================
@@ -189,6 +194,7 @@ const NodeDef kFilesNodeDef = {
     .preferred_field_name = NULL,
     .field_is_selectable = NULL,
     .propagate_schema = NULL,
+    .refresh_source_schema = RefreshFilesSchema,
     .uses_field_selector = false,
     .field_selector_label = NULL,
     .field_selector_y_offset = 12.0f,

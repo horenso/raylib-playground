@@ -472,8 +472,20 @@ bool DrawInspectorWindow(GraphContext *graph, InspectorWindow *win) {
             while (j >= 0) {
                 StreamValue *jv = &port->items[sorted_indices[j]].values[sf];
                 int cmp = 0;
-                if (vt == VALUE_INT || vt == VALUE_SIZE || vt == VALUE_DATETIME) {
+                if (vt == VALUE_FLOAT) {
+                    double a = jv->as.floating, b = kv->as.floating;
+                    cmp = (a > b) - (a < b);
+                } else if (vt == VALUE_INT) {
                     long long a = jv->as.integer, b = kv->as.integer;
+                    cmp = (a > b) - (a < b);
+                } else if (vt == VALUE_SIZE) {
+                    unsigned long long a = jv->as.file_size, b = kv->as.file_size;
+                    cmp = (a > b) - (a < b);
+                } else if (vt == VALUE_DATETIME) {
+                    long long a = jv->as.datetime, b = kv->as.datetime;
+                    cmp = (a > b) - (a < b);
+                } else if (vt == VALUE_BOOL) {
+                    bool a = jv->as.boolean, b = kv->as.boolean;
                     cmp = (a > b) - (a < b);
                 } else {
                     cmp = strcmp(jv->as.text, kv->as.text);
@@ -514,10 +526,16 @@ bool DrawInspectorWindow(GraphContext *graph, InspectorWindow *win) {
             }
         }
         Color name_color = field->derived ? (Color){116, 206, 173, 255} : (Color){200, 208, 220, 255};
-        DrawInterfaceText(fonts.mono, field->name, column_x + UiSize(graph, 8.0f), text_y, fonts.mono_size, name_color);
+        char header_label[MAX_FIELD_NAME + 16];
+        snprintf(header_label, sizeof(header_label), "%s: %s", field->name, ValueTypeName(field->type));
+        BeginScissorMode((int)(column_x + UiSize(graph, 4.0f)), (int)header.y,
+                         (int)(column_width - UiSize(graph, 8.0f)), (int)header.height);
+        DrawInterfaceText(fonts.mono, header_label, column_x + UiSize(graph, 8.0f), text_y, fonts.mono_size,
+                          name_color);
+        EndScissorMode();
         // Sort indicator — use the same raygui arrow icons as field dropdowns.
         if (win->sort_field == column) {
-            float name_w = MeasureTextEx(fonts.mono, field->name, fonts.mono_size, 0).x;
+            float name_w = MeasureTextEx(fonts.mono, header_label, fonts.mono_size, 0).x;
             int icon_scale = UiUnit(graph) >= 1.5f ? 2 : 1;
             int icon_size = 16 * icon_scale;
             int icon_x = (int)(column_x + UiSize(graph, 12.0f) + name_w);
@@ -743,8 +761,13 @@ void DrawPortHoverPreview(GraphContext *graph, int port_id) {
         FieldSchema *field = &port->schema.fields[column];
         float column_x = header.x + column * column_width;
         Color name_color = field->derived ? (Color){116, 206, 173, 255} : (Color){200, 208, 220, 255};
-        DrawInterfaceText(fonts.mono, field->name, column_x + UiSize(graph, 8.0f), hdr_text_y, fonts.mono_size,
+        char header_label[MAX_FIELD_NAME + 16];
+        snprintf(header_label, sizeof(header_label), "%s: %s", field->name, ValueTypeName(field->type));
+        BeginScissorMode((int)(column_x + UiSize(graph, 4.0f)), (int)header.y,
+                         (int)(column_width - UiSize(graph, 8.0f)), (int)header.height);
+        DrawInterfaceText(fonts.mono, header_label, column_x + UiSize(graph, 8.0f), hdr_text_y, fonts.mono_size,
                           name_color);
+        EndScissorMode();
         if (column > 0) {
             DrawLineEx((Vector2){column_x, header.y}, (Vector2){column_x, list_bounds.y + list_bounds.height}, unit,
                        (Color){45, 52, 65, 255});
@@ -967,9 +990,10 @@ void DrawToolbar(GraphContext *graph) {
     }
 
     if (graph->add_menu_open) {
-        const char *labels[] = {"Files", "Match", "Insert", "Get", "Exec", "HTTP Request"};
-        NodeType node_types[] = {NODE_DIRECTORY_LIST, NODE_MATCH, NODE_INSERT, NODE_GET, NODE_EXEC, NODE_HTTP_REQUEST};
-        int label_count = 6;
+        const char *labels[] = {"Files", "CSV", "Match", "Insert", "Get", "Exec", "HTTP Request"};
+        NodeType node_types[] = {NODE_DIRECTORY_LIST, NODE_CSV,  NODE_MATCH, NODE_INSERT,
+                                 NODE_GET,            NODE_EXEC, NODE_HTTP_REQUEST};
+        int label_count = 7;
         float menu_w = UiSize(graph, 176.0f);
         float menu_h = UiSize(graph, 10.0f + label_count * 31.0f);
         float menu_x = graph->add_menu_pos.x;
