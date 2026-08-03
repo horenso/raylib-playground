@@ -49,6 +49,7 @@ UiTextStyle GetUiTextStyle(TextRole role, bool canvas);
 void DrawUiText(TextRole role, bool canvas, const char *text, float x, float y, Color color);
 Vector2 MeasureUiText(TextRole role, bool canvas, const char *text);
 float ScaledFontSize(float size, float scale);
+float FontTextCenterOffset(Font font, float box_height);
 void SetGuiScale(float scale);
 void SetCodeGuiScale(float scale);
 void SetNodeGuiScale(float scale);

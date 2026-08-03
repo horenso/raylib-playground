@@ -3,6 +3,12 @@
 
 #include "raylib.h"
 
+// Correction applied to raygui's vertical text centering (TEXT_VALIGN_PIXEL_OFFSET).
+// Shifts GuiButton/GuiWindowBox etc. text so capitals are optically centred.
+// Updated by SetGuiScale() whenever the GUI font or size changes.
+static int g_gui_valign_offset = 0;
+#define TEXT_VALIGN_PIXEL_OFFSET(h) (g_gui_valign_offset + (int)(h) % 2)
+
 #define RAYGUI_IMPLEMENTATION
 #include "raygui.h"
 
@@ -27,6 +33,8 @@ typedef enum {
 typedef struct {
     FontFamily family;
     int pixel_size;
+    int ascender;
+    int cap_height;
     Font font;
 } CachedFont;
 
@@ -146,8 +154,35 @@ static Font FontForPixelSize(FontFamily family, int pixel_size) {
     if (font.texture.id == 0) {
         return GetFontDefault();
     }
-    font_cache[font_cache_count++] = (CachedFont){.family = family, .pixel_size = pixel_size, .font = font};
+    // face is still set to pixel_size; read metrics for optical centering.
+    int ascender = (int)((face->size->metrics.ascender + 32) >> 6);
+    int cap_height = ascender;
+    if (FT_Load_Char(face, (FT_ULong)'H', FT_LOAD_DEFAULT) == 0) {
+        int ch = (int)((face->glyph->metrics.horiBearingY + 32) >> 6);
+        if (ch > 0) {
+            cap_height = ch;
+        }
+    }
+    font_cache[font_cache_count++] = (CachedFont){
+        .family = family, .pixel_size = pixel_size, .ascender = ascender, .cap_height = cap_height, .font = font};
     return font;
+}
+
+// Returns the y offset to optically centre uppercase text inside a box.
+// Usage: DrawText(font, text, x, box_y + FontTextCenterOffset(font, box_height), size, color);
+float FontTextCenterOffset(Font font, float box_height) {
+    for (int i = 0; i < font_cache_count; i++) {
+        if (font_cache[i].font.texture.id == font.texture.id) {
+            // Capitals occupy [y + (ascender - cap_height), y + ascender].
+            // Centre that range within box_height:
+            //   visual_center = y + ascender - cap_height/2  =  box_height/2
+            //   => y = (box_height - 2*ascender + cap_height) / 2
+            float ascender = (float)font_cache[i].ascender;
+            float cap_h = (float)font_cache[i].cap_height;
+            return (box_height - 2.0f * ascender + cap_h) * 0.5f;
+        }
+    }
+    return (box_height - (float)font.baseSize) * 0.5f;
 }
 
 void UpdateInterfaceFontScale(float application_scale, float canvas_scale) {
@@ -301,7 +336,9 @@ Vector2 MeasureUiText(TextRole role, bool canvas, const char *text) {
 
 void SetGuiScale(float scale) {
     GuiSetFont(fonts.gui);
-    GuiSetStyle(DEFAULT, TEXT_SIZE, (int)ScaledFontSize(GUI_TEXT_SIZE, scale));
+    int text_size = (int)ScaledFontSize(GUI_TEXT_SIZE, scale);
+    GuiSetStyle(DEFAULT, TEXT_SIZE, text_size);
+    g_gui_valign_offset = (int)FontTextCenterOffset(fonts.gui, (float)text_size);
     GuiSetStyle(DEFAULT, TEXT_PADDING, (int)(4.0f * scale + 0.5f));
     GuiSetStyle(LISTVIEW, LIST_ITEMS_HEIGHT, (int)(24.0f * scale + 0.5f));
     GuiSetStyle(LISTVIEW, SCROLLBAR_WIDTH, (int)(14.0f * scale + 0.5f));
@@ -311,6 +348,7 @@ void SetGuiScale(float scale) {
 void SetCodeGuiScale(float scale) {
     SetGuiScale(scale);
     GuiSetFont(fonts.mono);
+    g_gui_valign_offset = (int)FontTextCenterOffset(fonts.mono, (float)GuiGetStyle(DEFAULT, TEXT_SIZE));
 }
 
 void SetNodeGuiScale(float scale) {
