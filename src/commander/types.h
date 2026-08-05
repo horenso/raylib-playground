@@ -89,6 +89,7 @@ typedef enum {
     NODE_GET,
     NODE_LEGACY_NUMBER_FILTER,
     NODE_CSV,
+    NODE_STRINGIFY,
 } NodeType;
 
 typedef enum {

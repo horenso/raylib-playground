@@ -166,7 +166,7 @@ bool LoadGraph(GraphContext *graph, const char *path) {
                 // Backward compat: old files saved integer type codes
                 char *endp;
                 long val = strtol(type_str, &endp, 10);
-                if (*endp == '\0' && val >= 0 && val <= NODE_CSV) {
+                if (*endp == '\0' && val >= 0 && val <= NODE_STRINGIFY) {
                     type_int = (int)val;
                 }
             }

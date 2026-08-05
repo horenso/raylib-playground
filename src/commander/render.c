@@ -1002,10 +1002,10 @@ void DrawToolbar(GraphContext *graph) {
     }
 
     if (graph->add_menu_open) {
-        const char *labels[] = {"Files", "CSV", "Filter", "Insert", "Get", "Exec", "HTTP Request"};
-        NodeType node_types[] = {NODE_DIRECTORY_LIST, NODE_CSV,  NODE_FILTER, NODE_INSERT,
-                                 NODE_GET,            NODE_EXEC, NODE_HTTP_REQUEST};
-        int label_count = 7;
+        const char *labels[] = {"Files", "CSV", "Filter", "Stringify", "Insert", "Get", "Exec", "HTTP Request"};
+        NodeType node_types[] = {NODE_DIRECTORY_LIST, NODE_CSV, NODE_FILTER, NODE_STRINGIFY,
+                                 NODE_INSERT,         NODE_GET, NODE_EXEC,   NODE_HTTP_REQUEST};
+        int label_count = 8;
         float menu_w = UiSize(graph, 176.0f);
         float menu_h = UiSize(graph, 10.0f + label_count * 31.0f);
         float menu_x = graph->add_menu_pos.x;
