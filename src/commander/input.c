@@ -7,8 +7,93 @@
 #include "raylib.h"
 #include "raymath.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
+
+enum {
+    NODE_RESIZE_NONE = 0,
+    NODE_RESIZE_LEFT = 1 << 0,
+    NODE_RESIZE_RIGHT = 1 << 1,
+    NODE_RESIZE_TOP = 1 << 2,
+    NODE_RESIZE_BOTTOM = 1 << 3,
+};
+
+static Vector2 NodeMinimumSize(const Node *node) {
+    switch (node->type) {
+    case NODE_CSV:
+        return (Vector2){280.0f, 164.0f};
+    case NODE_EXEC:
+        return (Vector2){320.0f, 184.0f};
+    case NODE_HTTP_REQUEST:
+        return (Vector2){250.0f, 164.0f};
+    case NODE_INSERT:
+        return (Vector2){300.0f, 300.0f};
+    case NODE_GET:
+        return (Vector2){250.0f, 150.0f};
+    case NODE_STRINGIFY:
+        return (Vector2){250.0f, 184.0f};
+    case NODE_DIRECTORY_LIST:
+    case NODE_FILTER:
+    case NODE_SEARCH_FILES:
+        return (Vector2){250.0f, 220.0f};
+    default:
+        return (Vector2){250.0f, 150.0f};
+    }
+}
+
+static unsigned int NodeResizeEdgesAtMouse(GraphContext *graph, Node *node, Vector2 mouse) {
+    Rectangle bounds = NodeScreenBounds(graph, node);
+    float tolerance = UiSize(graph, 6.0f);
+    Rectangle hit_bounds = {bounds.x - tolerance, bounds.y - tolerance, bounds.width + tolerance * 2.0f,
+                            bounds.height + tolerance * 2.0f};
+    if (!CheckCollisionPointRec(mouse, hit_bounds)) {
+        return NODE_RESIZE_NONE;
+    }
+
+    unsigned int edges = NODE_RESIZE_NONE;
+    if (fabsf(mouse.x - bounds.x) <= tolerance) {
+        edges |= NODE_RESIZE_LEFT;
+    } else if (fabsf(mouse.x - (bounds.x + bounds.width)) <= tolerance) {
+        edges |= NODE_RESIZE_RIGHT;
+    }
+    if (fabsf(mouse.y - bounds.y) <= tolerance) {
+        edges |= NODE_RESIZE_TOP;
+    } else if (fabsf(mouse.y - (bounds.y + bounds.height)) <= tolerance) {
+        edges |= NODE_RESIZE_BOTTOM;
+    }
+    return edges;
+}
+
+static Node *NodeAtResizeEdge(GraphContext *graph, Vector2 mouse, unsigned int *edges) {
+    *edges = NODE_RESIZE_NONE;
+    if (MouseOverAnyInspectorWindow(graph, mouse)) {
+        return NULL;
+    }
+    for (int i = graph->node_count - 1; i >= 0; i--) {
+        Node *node = &graph->nodes[i];
+        unsigned int hit = NodeResizeEdgesAtMouse(graph, node, mouse);
+        if (hit != NODE_RESIZE_NONE) {
+            *edges = hit;
+            return node;
+        }
+        if (CheckCollisionPointRec(mouse, NodeScreenBounds(graph, node))) {
+            return NULL;
+        }
+    }
+    return NULL;
+}
+
+static int ResizeCursor(unsigned int edges) {
+    bool horizontal = (edges & (NODE_RESIZE_LEFT | NODE_RESIZE_RIGHT)) != 0;
+    bool vertical = (edges & (NODE_RESIZE_TOP | NODE_RESIZE_BOTTOM)) != 0;
+    if (horizontal && vertical) {
+        bool nwse = ((edges & NODE_RESIZE_LEFT) && (edges & NODE_RESIZE_TOP)) ||
+                    ((edges & NODE_RESIZE_RIGHT) && (edges & NODE_RESIZE_BOTTOM));
+        return nwse ? MOUSE_CURSOR_RESIZE_NWSE : MOUSE_CURSOR_RESIZE_NESW;
+    }
+    return horizontal ? MOUSE_CURSOR_RESIZE_EW : MOUSE_CURSOR_RESIZE_NS;
+}
 
 static bool MouseOverNodeTextBox(GraphContext *graph, Vector2 mouse) {
     for (int i = graph->node_count - 1; i >= 0; i--) {
@@ -34,7 +119,7 @@ static bool MouseOverDialogTextBox(GraphContext *graph, Vector2 mouse) {
     Rectangle text_box = {
         UiSize(graph, 100.0f),
         ToolbarHeight(graph) + UiSize(graph, 8.0f),
-        UiSize(graph, 220.0f),
+        UiSize(graph, 188.0f),
         UiSize(graph, 28.0f),
     };
     return CheckCollisionPointRec(mouse, text_box);
@@ -43,6 +128,9 @@ static bool MouseOverDialogTextBox(GraphContext *graph, Vector2 mouse) {
 static InteractionMode ResolveInteractionMode(GraphContext *graph, bool panning) {
     if (graph->knife_active) {
         return INTERACTION_KNIFE;
+    }
+    if (graph->resizing_node_id > 0 && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        return INTERACTION_RESIZING_NODE;
     }
     if (graph->dragging_node_id >= 0 && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
         return INTERACTION_DRAGGING_NODE;
@@ -169,13 +257,25 @@ static bool UpdateNodeDropdowns(GraphContext *graph, Vector2 mouse) {
 
 static void UpdateMouseCursor(GraphContext *graph, Vector2 mouse) {
     int cursor = MOUSE_CURSOR_DEFAULT;
-    if (graph->interaction_mode == INTERACTION_PANNING || graph->interaction_mode == INTERACTION_DRAGGING_NODE) {
+    if (graph->interaction_mode == INTERACTION_RESIZING_NODE) {
+        cursor = ResizeCursor(graph->node_resize_edges);
+    } else if (graph->interaction_mode == INTERACTION_PANNING || graph->interaction_mode == INTERACTION_DRAGGING_NODE) {
         cursor = MOUSE_CURSOR_RESIZE_ALL;
     } else if (graph->interaction_mode == INTERACTION_KNIFE || graph->interaction_mode == INTERACTION_LINKING) {
         cursor = MOUSE_CURSOR_CROSSHAIR;
-    } else if (MouseOverDialogTextBox(graph, mouse) ||
-               (!MouseOverAnyInspectorWindow(graph, mouse) && MouseOverNodeTextBox(graph, mouse))) {
-        cursor = MOUSE_CURSOR_IBEAM;
+    } else {
+        bool floating_window = MouseOverAnyInspectorWindow(graph, mouse);
+        bool over_port =
+            PortAtMouse(graph, mouse, PORT_DIR_INPUT) >= 0 || PortAtMouse(graph, mouse, PORT_DIR_OUTPUT) >= 0;
+        unsigned int resize_edges = NODE_RESIZE_NONE;
+        if (!floating_window && !over_port) {
+            NodeAtResizeEdge(graph, mouse, &resize_edges);
+        }
+        if (resize_edges != NODE_RESIZE_NONE) {
+            cursor = ResizeCursor(resize_edges);
+        } else if (MouseOverDialogTextBox(graph, mouse) || (!floating_window && MouseOverNodeTextBox(graph, mouse))) {
+            cursor = MOUSE_CURSOR_IBEAM;
+        }
     }
 
     static int current_cursor = -1;
@@ -312,6 +412,8 @@ void UpdateCanvas(GraphContext *graph) {
         graph->interaction_mode == INTERACTION_IDLE) {
         int output = PortAtMouse(graph, mouse, PORT_DIR_OUTPUT);
         int input = PortAtMouse(graph, mouse, PORT_DIR_INPUT);
+        unsigned int resize_edges = NODE_RESIZE_NONE;
+        Node *resize_node = output < 0 && input < 0 ? NodeAtResizeEdge(graph, mouse, &resize_edges) : NULL;
         int node_id = NodeAtMouse(graph, mouse);
         Node *node = FindNode(graph, node_id);
         if (output >= 0) {
@@ -331,6 +433,15 @@ void UpdateCanvas(GraphContext *graph) {
             if (graph->active_port_id >= 0) {
                 TextCopy(graph->status, "Link detached - drop it on an input to reconnect");
             }
+        } else if (resize_node) {
+            graph->selected_node_id = resize_node->id;
+            graph->resizing_node_id = resize_node->id;
+            graph->node_resize_edges = resize_edges;
+            graph->node_resize_start_bounds = resize_node->bounds;
+            graph->node_resize_start_mouse = GetScreenToWorld2D(mouse, CanvasCamera(graph));
+            CloseNodeEditors(graph, -1);
+            TextCopy(graph->status, "Resizing node");
+            BringNodeToFront(graph, resize_node->id);
         } else if (MouseOverAnyInspectorWindow(graph, mouse)) {
             // clicks inside an inspector window: let raygui handle it
         } else if (node) {
@@ -377,8 +488,51 @@ void UpdateCanvas(GraphContext *graph) {
         }
     }
 
+    if (graph->interaction_mode == INTERACTION_RESIZING_NODE) {
+        Node *node = FindNode(graph, graph->resizing_node_id);
+        if (node) {
+            Vector2 world_mouse = GetScreenToWorld2D(mouse, CanvasCamera(graph));
+            Vector2 delta = Vector2Subtract(world_mouse, graph->node_resize_start_mouse);
+            Rectangle start = graph->node_resize_start_bounds;
+            Rectangle resized = start;
+            Vector2 minimum = NodeMinimumSize(node);
+
+            if (graph->node_resize_edges & NODE_RESIZE_LEFT) {
+                float right = start.x + start.width;
+                resized.x = fminf(start.x + delta.x, right - minimum.x);
+                resized.width = right - resized.x;
+            } else if (graph->node_resize_edges & NODE_RESIZE_RIGHT) {
+                resized.width = fmaxf(minimum.x, start.width + delta.x);
+            }
+            if (graph->node_resize_edges & NODE_RESIZE_TOP) {
+                float bottom = start.y + start.height;
+                resized.y = fminf(start.y + delta.y, bottom - minimum.y);
+                resized.height = bottom - resized.y;
+            } else if (graph->node_resize_edges & NODE_RESIZE_BOTTOM) {
+                resized.height = fmaxf(minimum.y, start.height + delta.y);
+            }
+
+            node->bounds = resized;
+            for (int i = 0; i < node->output_count; i++) {
+                Port *port = FindPort(graph, node->output_port_ids[i]);
+                if (port) {
+                    port->relative_pos.x = resized.width;
+                }
+            }
+        } else {
+            graph->resizing_node_id = -1;
+            graph->node_resize_edges = NODE_RESIZE_NONE;
+        }
+    }
+
     if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+        bool resized_node = graph->resizing_node_id > 0;
         graph->dragging_node_id = -1;
+        graph->resizing_node_id = -1;
+        graph->node_resize_edges = NODE_RESIZE_NONE;
+        if (resized_node) {
+            TextCopy(graph->status, "Node resized");
+        }
         if (graph->active_port_id >= 0) {
             int input = PortAtMouse(graph, mouse, PORT_DIR_INPUT);
             if (input >= 0 && AddLink(graph, graph->active_port_id, input)) {

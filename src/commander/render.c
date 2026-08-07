@@ -12,7 +12,88 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+typedef struct {
+    char path[MAX_PATH_LENGTH];
+    char label[256];
+    bool is_directory;
+} ExplorerEntry;
+
+static ExplorerEntry explorer_entries[MAX_EXPLORER_ENTRIES];
+
+static Rectangle FileExplorerBounds(GraphContext *graph) {
+    FileExplorerWindow *win = &graph->file_explorer;
+    float min_w = UiSize(graph, 320.0f);
+    float min_h = UiSize(graph, 220.0f);
+    float width = win->size.x > 0 ? win->size.x : UiSize(graph, 480.0f);
+    float height = win->size.y > 0 ? win->size.y : UiSize(graph, 360.0f);
+    width = Clamp(width, min_w, (float)GetScreenWidth() - UiSize(graph, 24.0f));
+    height = Clamp(height, min_h, (float)GetScreenHeight() - UiSize(graph, 48.0f));
+    return (Rectangle){win->pos.x, win->pos.y, width, height};
+}
+
+static bool PathMatchesMode(const char *path, PathPickerMode mode) {
+    struct stat info;
+    if (!path[0] || stat(path, &info) != 0) {
+        return false;
+    }
+    if (mode == PATH_PICK_DIRECTORY) {
+        return S_ISDIR(info.st_mode);
+    }
+    if (mode == PATH_PICK_FILE) {
+        return S_ISREG(info.st_mode);
+    }
+    return S_ISDIR(info.st_mode) || S_ISREG(info.st_mode);
+}
+
+static void SetExplorerDirectory(FileExplorerWindow *win, const char *path) {
+    char *resolved = realpath(path, NULL);
+    snprintf(win->directory, sizeof(win->directory), "%s", resolved ? resolved : path);
+    free(resolved);
+    win->scroll = 0;
+    win->active = -1;
+    win->last_click_index = -1;
+}
+
+static void OpenFileExplorer(GraphContext *graph, int node_id, bool targets_open_dialog, PathPickerMode mode,
+                             const char *path, Vector2 anchor) {
+    FileExplorerWindow *win = &graph->file_explorer;
+    char initial_directory[MAX_PATH_LENGTH] = {0};
+    struct stat info;
+    if (stat(path, &info) == 0 && S_ISDIR(info.st_mode)) {
+        TextCopy(initial_directory, path);
+    } else if (stat(path, &info) == 0 && S_ISREG(info.st_mode)) {
+        TextCopy(initial_directory, GetDirectoryPath(path));
+    } else if (!getcwd(initial_directory, sizeof(initial_directory))) {
+        TextCopy(initial_directory, ".");
+    }
+
+    *win = (FileExplorerWindow){
+        .open = true,
+        .node_id = node_id,
+        .targets_open_dialog = targets_open_dialog,
+        .mode = mode,
+        .pos = {anchor.x + UiSize(graph, 6.0f), anchor.y + UiSize(graph, 6.0f)},
+        .active = -1,
+        .last_click_index = -1,
+    };
+    float width = UiSize(graph, 480.0f);
+    float height = UiSize(graph, 360.0f);
+    if (win->pos.x + width > GetScreenWidth() - UiSize(graph, 4.0f)) {
+        win->pos.x = GetScreenWidth() - width - UiSize(graph, 4.0f);
+    }
+    if (win->pos.y + height > GetScreenHeight() - StatusHeight(graph) - UiSize(graph, 4.0f)) {
+        win->pos.y = GetScreenHeight() - StatusHeight(graph) - height - UiSize(graph, 4.0f);
+    }
+    win->pos.x = fmaxf(UiSize(graph, 4.0f), win->pos.x);
+    win->pos.y = fmaxf(ToolbarHeight(graph) + UiSize(graph, 4.0f), win->pos.y);
+    SetExplorerDirectory(win, initial_directory);
+}
 
 void DrawCanvasGrid(GraphContext *graph) {
     float toolbar_height = ToolbarHeight(graph);
@@ -69,6 +150,7 @@ static Rectangle NodeRunButtonBounds(GraphContext *graph, Node *node) {
 
 bool NodeOwnsMouse(GraphContext *graph, Node *node) {
     return graph->interaction_mode == INTERACTION_IDLE && !node->field_dropdown_open && !node->unit_dropdown_open &&
+           !MouseOverAnyInspectorWindow(graph, GetMousePosition()) &&
            NodeAtMouse(graph, GetMousePosition()) == node->id;
 }
 
@@ -306,11 +388,12 @@ bool DrawNodeTextBox(GraphContext *graph, Node *node, Rectangle bounds, char *te
     SetNodeGuiScale(CanvasUnit(graph));
     bool active = node->editing_control == control_id;
     bool was_locked = GuiIsLocked();
-    if (node->field_dropdown_open || node->unit_dropdown_open) {
+    bool floating_window_owns_mouse = MouseOverAnyInspectorWindow(graph, GetMousePosition());
+    if (node->field_dropdown_open || node->unit_dropdown_open || floating_window_owns_mouse) {
         GuiLock();
     }
     bool changed_editing = GuiTextBox(bounds, text, capacity, active);
-    if ((node->field_dropdown_open || node->unit_dropdown_open) && !was_locked) {
+    if ((node->field_dropdown_open || node->unit_dropdown_open || floating_window_owns_mouse) && !was_locked) {
         GuiUnlock();
     }
     if (changed_editing) {
@@ -322,6 +405,29 @@ bool DrawNodeTextBox(GraphContext *graph, Node *node, Rectangle bounds, char *te
         }
     }
     return strcmp(before, text) != 0;
+}
+
+bool DrawNodePathBox(GraphContext *graph, Node *node, Rectangle bounds, char *text, int capacity, int control_id,
+                     PathPickerMode mode) {
+    float gap = CanvasSize(graph, 4.0f);
+    float button_width = bounds.height;
+    Rectangle text_bounds = {bounds.x, bounds.y, bounds.width - button_width - gap, bounds.height};
+    Rectangle browse_button = {text_bounds.x + text_bounds.width + gap, bounds.y, button_width, bounds.height};
+
+    bool changed = DrawNodeTextBox(graph, node, text_bounds, text, capacity, control_id);
+    if (!PathMatchesMode(text, mode)) {
+        DrawRectangleLinesEx(text_bounds, CanvasSize(graph, 2.0f), (Color){225, 72, 82, 255});
+    }
+
+    SetNodeGuiScale(CanvasUnit(graph));
+    bool browse_clicked = GuiButton(browse_button, "#01#");
+    if (browse_clicked && NodeOwnsMouse(graph, node) && !MouseOverAnyInspectorWindow(graph, GetMousePosition())) {
+        OpenFileExplorer(graph, node->id, false, mode, text,
+                         (Vector2){browse_button.x + browse_button.width, browse_button.y});
+        node->text_editing = false;
+        node->editing_control = -1;
+    }
+    return changed;
 }
 
 void DrawNodeContent(GraphContext *graph, Node *node) {
@@ -704,6 +810,192 @@ bool DrawInspectorWindow(GraphContext *graph, InspectorWindow *win) {
     return close_clicked;
 }
 
+static int CompareExplorerEntries(const void *left, const void *right) {
+    const ExplorerEntry *a = left;
+    const ExplorerEntry *b = right;
+    if (a->is_directory != b->is_directory) {
+        return a->is_directory ? -1 : 1;
+    }
+    return strcasecmp(a->label, b->label);
+}
+
+static int CollectExplorerEntries(FileExplorerWindow *win) {
+    FilePathList paths = LoadDirectoryFiles(win->directory);
+    int count = 0;
+    for (unsigned int i = 0; i < paths.count && count < MAX_EXPLORER_ENTRIES; i++) {
+        struct stat info;
+        if (stat(paths.paths[i], &info) != 0 || (!S_ISDIR(info.st_mode) && !S_ISREG(info.st_mode))) {
+            continue;
+        }
+        ExplorerEntry *entry = &explorer_entries[count++];
+        snprintf(entry->path, sizeof(entry->path), "%s", paths.paths[i]);
+        entry->is_directory = S_ISDIR(info.st_mode);
+        snprintf(entry->label, sizeof(entry->label), entry->is_directory ? "#217# %s" : "#218# %s",
+                 GetFileName(paths.paths[i]));
+    }
+    UnloadDirectoryFiles(paths);
+    qsort(explorer_entries, (size_t)count, sizeof(explorer_entries[0]), CompareExplorerEntries);
+    if (win->active >= count) {
+        win->active = -1;
+    }
+    return count;
+}
+
+static bool ChooseExplorerPath(GraphContext *graph, const char *path) {
+    FileExplorerWindow *win = &graph->file_explorer;
+    if (win->targets_open_dialog) {
+        if (!PathMatchesMode(path, PATH_PICK_FILE)) {
+            TextCopy(graph->status, "Select a file to open");
+            return false;
+        }
+        snprintf(graph->open_dialog_path, sizeof(graph->open_dialog_path), "%s", path);
+        TextCopy(graph->status, "File selected - choose Load to open it");
+        win->open = false;
+        return true;
+    }
+    Node *node = FindNode(graph, win->node_id);
+    if (!node || !PathMatchesMode(path, win->mode)) {
+        TextCopy(graph->status, "That entry cannot be used for this path field");
+        return false;
+    }
+    if (strlen(path) >= sizeof(node->parameter)) {
+        TextCopy(graph->status, "That path is too long for the node field");
+        return false;
+    }
+    snprintf(node->parameter, sizeof(node->parameter), "%s", path);
+    node->text_editing = false;
+    node->editing_control = -1;
+    MarkNodeDirty(graph, node->id);
+    snprintf(graph->status, sizeof(graph->status), "%s path selected - downstream nodes are dirty", node->title);
+    win->open = false;
+    return true;
+}
+
+static void OpenExplorerEntry(GraphContext *graph, ExplorerEntry *entry) {
+    FileExplorerWindow *win = &graph->file_explorer;
+    if (entry->is_directory) {
+        SetExplorerDirectory(win, entry->path);
+    } else if (win->mode != PATH_PICK_DIRECTORY) {
+        ChooseExplorerPath(graph, entry->path);
+    } else {
+        TextCopy(graph->status, "Choose a folder for this path field");
+    }
+}
+
+bool DrawFileExplorerWindow(GraphContext *graph) {
+    FileExplorerWindow *win = &graph->file_explorer;
+    if (!win->open || (win->targets_open_dialog ? !graph->open_dialog_open : !FindNode(graph, win->node_id))) {
+        return true;
+    }
+
+    float unit = UiUnit(graph);
+    Vector2 mouse = GetMousePosition();
+    if (win->dragging) {
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            win->pos = (Vector2){mouse.x - win->drag_offset.x, mouse.y - win->drag_offset.y};
+        } else {
+            win->dragging = false;
+        }
+    }
+
+    Rectangle panel = FileExplorerBounds(graph);
+    float title_height = 24.0f;
+    Rectangle title_bar = {panel.x, panel.y, panel.width - title_height, title_height};
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !win->resizing && CheckCollisionPointRec(mouse, title_bar)) {
+        win->dragging = true;
+        win->drag_offset = (Vector2){mouse.x - win->pos.x, mouse.y - win->pos.y};
+    }
+
+    SetGuiScale(unit);
+    bool close_clicked = GuiWindowBox(panel, "  File Explorer") != 0;
+    float padding = UiSize(graph, 8.0f);
+    float row_height = UiSize(graph, 28.0f);
+    float button_width = UiSize(graph, 74.0f);
+    Rectangle content = {panel.x + padding, panel.y + title_height + padding, panel.width - padding * 2,
+                         panel.height - title_height - padding * 2};
+
+    Rectangle up_button = {content.x, content.y, UiSize(graph, 42.0f), row_height};
+    Rectangle directory_bar = {up_button.x + up_button.width + UiSize(graph, 5.0f), content.y,
+                               content.width - up_button.width - UiSize(graph, 5.0f), row_height};
+    if (GuiButton(up_button, "..")) {
+        char parent[MAX_PATH_LENGTH];
+        size_t directory_length = strlen(win->directory);
+        if (directory_length + 3 < sizeof(parent)) {
+            memcpy(parent, win->directory, directory_length);
+            memcpy(parent + directory_length, "/..", 4);
+            SetExplorerDirectory(win, parent);
+        }
+    }
+    DrawRectangleRec(directory_bar, (Color){27, 32, 41, 255});
+    DrawRectangleLinesEx(directory_bar, unit, (Color){75, 84, 101, 255});
+    BeginScissorMode((int)(directory_bar.x + padding), (int)directory_bar.y, (int)(directory_bar.width - padding * 2),
+                     (int)directory_bar.height);
+    DrawInterfaceText(fonts.mono, win->directory, directory_bar.x + padding,
+                      directory_bar.y + FontTextCenterOffset(fonts.mono, directory_bar.height), fonts.mono_size,
+                      COLOR_MUTED);
+    EndScissorMode();
+
+    float footer_gap = UiSize(graph, 8.0f);
+    Rectangle list_bounds = {content.x, content.y + row_height + UiSize(graph, 7.0f), content.width,
+                             content.height - row_height * 2 - UiSize(graph, 14.0f)};
+    int count = CollectExplorerEntries(win);
+    char *labels[MAX_EXPLORER_ENTRIES];
+    for (int i = 0; i < count; i++) {
+        labels[i] = explorer_entries[i].label;
+    }
+    int focus = -1;
+    SetCodeGuiScale(unit);
+    bool selection_changed = GuiListViewEx(list_bounds, labels, count, &win->scroll, &win->active, &focus) != 0;
+    SetGuiScale(unit);
+    if (selection_changed && focus >= 0) {
+        double now = GetTime();
+        if (win->last_click_index == focus && now - win->last_click_time <= 0.35) {
+            win->active = focus;
+            OpenExplorerEntry(graph, &explorer_entries[focus]);
+        } else {
+            win->last_click_index = focus;
+            win->last_click_time = now;
+        }
+    }
+
+    Rectangle select_button = {content.x + content.width - button_width, content.y + content.height - row_height,
+                               button_width, row_height};
+    Rectangle open_button = {select_button.x - footer_gap - button_width, select_button.y, button_width, row_height};
+    if (GuiButton(open_button, "Open") && win->active >= 0 && win->active < count) {
+        OpenExplorerEntry(graph, &explorer_entries[win->active]);
+    }
+    if (GuiButton(select_button, "Select")) {
+        if (win->active >= 0 && win->active < count) {
+            ChooseExplorerPath(graph, explorer_entries[win->active].path);
+        } else if (win->mode != PATH_PICK_FILE) {
+            ChooseExplorerPath(graph, win->directory);
+        } else {
+            TextCopy(graph->status, "Select a file first");
+        }
+    }
+
+    float resize_handle = UiSize(graph, 12.0f);
+    Vector2 bottom_right = {panel.x + panel.width, panel.y + panel.height};
+    DrawTriangle((Vector2){bottom_right.x - resize_handle, bottom_right.y},
+                 (Vector2){bottom_right.x, bottom_right.y - resize_handle}, bottom_right, (Color){75, 84, 101, 255});
+    Rectangle resize_zone = {bottom_right.x - resize_handle, bottom_right.y - resize_handle, resize_handle,
+                             resize_handle};
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mouse, resize_zone)) {
+        win->resizing = true;
+        win->resize_start_mouse = mouse;
+        win->resize_start_size = (Vector2){panel.width, panel.height};
+    }
+    if (win->resizing) {
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            win->size = (Vector2){win->resize_start_size.x + mouse.x - win->resize_start_mouse.x,
+                                  win->resize_start_size.y + mouse.y - win->resize_start_mouse.y};
+        } else {
+            win->resizing = false;
+        }
+    }
+    return close_clicked || !win->open;
+}
+
 // Draw a transient hover preview (not pinned, no close button, follows the port).
 void DrawPortHoverPreview(GraphContext *graph, int port_id) {
     Port *port = FindPort(graph, port_id);
@@ -887,6 +1179,9 @@ void DrawPortTypeTooltip(GraphContext *graph) {
 }
 
 bool MouseOverAnyInspectorWindow(GraphContext *graph, Vector2 mouse) {
+    if (graph->file_explorer.open && CheckCollisionPointRec(mouse, FileExplorerBounds(graph))) {
+        return true;
+    }
     for (int i = 0; i < MAX_INSPECTOR_WINDOWS; i++) {
         InspectorWindow *win = &graph->inspector_windows[i];
         if (win->port_id <= 0) {
@@ -1002,10 +1297,10 @@ void DrawToolbar(GraphContext *graph) {
     }
 
     if (graph->add_menu_open) {
-        const char *labels[] = {"Files", "Search Files", "CSV", "Filter", "Stringify", "Insert", "Get", "Exec",
-                                 "HTTP Request"};
-        NodeType node_types[] = {NODE_DIRECTORY_LIST, NODE_SEARCH_FILES, NODE_CSV,    NODE_FILTER, NODE_STRINGIFY,
-                                 NODE_INSERT,         NODE_GET,          NODE_EXEC,   NODE_HTTP_REQUEST};
+        const char *labels[] = {"Files",  "Search Files", "CSV",  "Filter",      "Stringify",
+                                "Insert", "Get",          "Exec", "HTTP Request"};
+        NodeType node_types[] = {NODE_DIRECTORY_LIST, NODE_SEARCH_FILES, NODE_CSV,  NODE_FILTER,      NODE_STRINGIFY,
+                                 NODE_INSERT,         NODE_GET,          NODE_EXEC, NODE_HTTP_REQUEST};
         int label_count = 9;
         float menu_w = UiSize(graph, 176.0f);
         float menu_h = UiSize(graph, 10.0f + label_count * 31.0f);
@@ -1052,7 +1347,7 @@ void DrawToolbar(GraphContext *graph) {
         Rectangle input = {
             UiSize(graph, 100.0f),
             toolbar_height + UiSize(graph, 8.0f),
-            UiSize(graph, 220.0f),
+            UiSize(graph, 188.0f),
             UiSize(graph, 28.0f),
         };
         static bool editing = false;
@@ -1061,6 +1356,21 @@ void DrawToolbar(GraphContext *graph) {
             editing = !editing;
         }
         SetGuiScale(unit);
+        if (!PathMatchesMode(graph->open_dialog_path, PATH_PICK_FILE)) {
+            DrawRectangleLinesEx(input, UiSize(graph, 2.0f), (Color){225, 72, 82, 255});
+        }
+        Rectangle browse_button = {
+            UiSize(graph, 292.0f),
+            toolbar_height + UiSize(graph, 8.0f),
+            UiSize(graph, 28.0f),
+            UiSize(graph, 28.0f),
+        };
+        if (GuiButton(browse_button, "#01#")) {
+            OpenFileExplorer(graph, -1, true, PATH_PICK_FILE, graph->open_dialog_path,
+                             (Vector2){browse_button.x + browse_button.width,
+                                       browse_button.y + browse_button.height + UiSize(graph, 14.0f)});
+            editing = false;
+        }
         Rectangle load_button = {
             UiSize(graph, 328.0f),
             toolbar_height + UiSize(graph, 8.0f),

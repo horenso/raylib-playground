@@ -35,6 +35,7 @@ int main(int argc, char **argv) {
     graph.selected_node_id = -1;
     graph.active_port_id = -1;
     graph.dragging_node_id = -1;
+    graph.resizing_node_id = -1;
     for (int i = 0; i < MAX_INSPECTOR_WINDOWS; i++) {
         graph.inspector_windows[i].port_id = -1;
         graph.inspector_windows[i].active = -1;
@@ -117,6 +118,9 @@ int main(int argc, char **argv) {
         DrawPortTypeTooltip(&graph);
 
         DrawToolbar(&graph);
+        if (graph.file_explorer.open && DrawFileExplorerWindow(&graph)) {
+            graph.file_explorer.open = false;
+        }
         DrawStatusBar(&graph);
 
         EndDrawing();

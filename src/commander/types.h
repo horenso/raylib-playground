@@ -12,6 +12,13 @@
 #define MAX_FIELDS 8
 #define MAX_FIELD_NAME 32
 #define MAX_INSPECTOR_WINDOWS 8
+#define MAX_EXPLORER_ENTRIES 512
+
+typedef enum {
+    PATH_PICK_FILE,
+    PATH_PICK_DIRECTORY,
+    PATH_PICK_ANY,
+} PathPickerMode;
 
 typedef struct {
     int port_id;        // -1 = slot is empty
@@ -30,6 +37,25 @@ typedef struct {
     int sort_field;     // -1 = no sort
     bool sort_asc;
 } InspectorWindow;
+
+typedef struct {
+    bool open;
+    int node_id;
+    bool targets_open_dialog;
+    PathPickerMode mode;
+    char directory[MAX_PATH_LENGTH];
+    Vector2 pos;
+    Vector2 size;
+    int scroll;
+    int active;
+    int last_click_index;
+    double last_click_time;
+    bool dragging;
+    Vector2 drag_offset;
+    bool resizing;
+    Vector2 resize_start_mouse;
+    Vector2 resize_start_size;
+} FileExplorerWindow;
 
 typedef enum {
     VALUE_NONE,
@@ -127,6 +153,7 @@ typedef enum {
     INTERACTION_PANNING,
     INTERACTION_KNIFE,
     INTERACTION_DRAGGING_NODE,
+    INTERACTION_RESIZING_NODE,
     INTERACTION_LINKING,
 } InteractionMode;
 
@@ -196,6 +223,10 @@ typedef struct {
     int active_port_id;
     int dragging_node_id;
     Vector2 drag_offset;
+    int resizing_node_id;
+    unsigned int node_resize_edges;
+    Rectangle node_resize_start_bounds;
+    Vector2 node_resize_start_mouse;
     bool knife_active;
     Vector2 knife_start;
     bool add_menu_open;
@@ -206,6 +237,7 @@ typedef struct {
     bool evaluation_error;
     char status[160];
     InspectorWindow inspector_windows[MAX_INSPECTOR_WINDOWS];
+    FileExplorerWindow file_explorer;
     float application_scale;
     InteractionMode interaction_mode;
 } GraphContext;

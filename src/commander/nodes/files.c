@@ -108,7 +108,7 @@ static void DrawFilesContent(GraphContext *graph, Node *node) {
         bounds.width - CanvasSize(graph, 28.0f),
         CanvasSize(graph, 30.0f),
     };
-    if (DrawNodeTextBox(graph, node, text_box, node->parameter, sizeof(node->parameter), 0)) {
+    if (DrawNodePathBox(graph, node, text_box, node->parameter, sizeof(node->parameter), 0, PATH_PICK_DIRECTORY)) {
         MarkNodeDirty(graph, node->id);
         snprintf(graph->status, sizeof(graph->status), "%s and downstream nodes are dirty", node->title);
     }
@@ -175,7 +175,7 @@ static bool MouseInEditAreaFiles(GraphContext *graph, Node *node, Vector2 mouse)
     Rectangle text_box = {
         bounds.x + CanvasSize(graph, 14.0f),
         bounds.y + CanvasSize(graph, NODE_HEADER_HEIGHT + 16.0f),
-        bounds.width - CanvasSize(graph, 28.0f),
+        bounds.width - CanvasSize(graph, 28.0f + 30.0f + 4.0f),
         CanvasSize(graph, 30.0f),
     };
     return CheckCollisionPointRec(mouse, text_box);

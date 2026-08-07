@@ -11,6 +11,7 @@ void DrawNodeShell(GraphContext *graph, Node *node);
 void DrawNodePorts(GraphContext *graph, Node *node);
 void DrawNodeContent(GraphContext *graph, Node *node);
 bool DrawInspectorWindow(GraphContext *graph, InspectorWindow *win);
+bool DrawFileExplorerWindow(GraphContext *graph);
 void DrawPortHoverPreview(GraphContext *graph, int port_id);
 void DrawPortTypeTooltip(GraphContext *graph);
 bool MouseOverAnyInspectorWindow(GraphContext *graph, Vector2 mouse);
@@ -22,5 +23,7 @@ Rectangle SizeUnitButtonBounds(GraphContext *graph, Node *node);
 // Exported for use by node_def.c draw_content callbacks
 bool NodeOwnsMouse(GraphContext *graph, Node *node);
 bool DrawNodeTextBox(GraphContext *graph, Node *node, Rectangle bounds, char *text, int capacity, int control_id);
+bool DrawNodePathBox(GraphContext *graph, Node *node, Rectangle bounds, char *text, int capacity, int control_id,
+                     PathPickerMode mode);
 bool DrawNodeOptionButton(GraphContext *graph, Node *node, Rectangle bounds, const char *label, bool active,
                           float font_size);
