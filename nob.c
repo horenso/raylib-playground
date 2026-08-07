@@ -106,7 +106,8 @@ int main(int argc, char **argv) {
 
         {
             Nob_Cmd commander_flags = {0};
-            nob_cmd_append(&commander_flags, "-Isrc/commander", "-I/usr/include/freetype2", "-lcurl", "-lfreetype");
+            nob_cmd_append(&commander_flags, "-Isrc/commander", "-I/usr/include/freetype2", "-lcurl", "-lfreetype",
+                           "-pthread");
             if (!build((BuildConfig){.src_dir = "src/commander", .extra_flags = commander_flags, .optimize = opt},
                        "commander")) {
                 nob_log(NOB_ERROR, "Could not build commander");

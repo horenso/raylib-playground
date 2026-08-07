@@ -14,6 +14,10 @@
 int main(int argc, char **argv) {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_HIGHDPI);
     InitWindow(1280, 760, "Commander - visual dataflow shell");
+    if (!IsWindowReady()) {
+        fprintf(stderr, "Commander could not create a window or OpenGL context.\n");
+        return 1;
+    }
     SetExitKey(KEY_NULL);
     SetWindowMinSize(900, 560);
     SetTargetFPS(60);
@@ -53,7 +57,12 @@ int main(int argc, char **argv) {
         SeedGraph(&graph);
     }
 
+    if (!InitializeEvaluator()) {
+        TextCopy(graph.status, "Could not start the background evaluator");
+    }
+
     while (!WindowShouldClose()) {
+        UpdateEvaluator(&graph);
         UpdateCanvas(&graph);
         UpdateInterfaceFontScale(UiUnit(&graph), CanvasUnit(&graph));
         if (graph.interaction_mode == INTERACTION_IDLE) {
@@ -127,6 +136,7 @@ int main(int argc, char **argv) {
         GuiUnlock();
     }
 
+    ShutdownEvaluator();
     UnloadInterfaceFonts();
     CloseWindow();
     return 0;

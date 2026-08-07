@@ -63,7 +63,7 @@ static bool EvaluateGet(GraphContext *graph, Node *node, Port *source, Port *out
 static void DrawGetContent(GraphContext *graph, Node *node) {
     Rectangle bounds = NodeScreenBounds(graph, node);
     float body_font_size = ScaledFontSize(BODY_TEXT_SIZE, CanvasUnit(graph));
-    const char *state_label = node->schema_error ? "SCHEMA ERROR" : node->is_dirty ? "NOT RUN" : "CURRENT";
+    const char *state_label = NodeStateLabel(node);
     DrawInterfaceText(fonts.node_body, state_label, bounds.x + CanvasSize(graph, 14.0f),
                       bounds.y + bounds.height - CanvasSize(graph, 21.0f), body_font_size, NodeStateColor(node));
 }

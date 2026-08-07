@@ -5,6 +5,8 @@
 
 #include "raylib.h"
 
+#include <stdint.h>
+
 #define MAX_NODES 32
 #define MAX_PORTS 64
 #define MAX_LINKS 64
@@ -183,8 +185,12 @@ typedef struct {
     int output_port_ids[4];
     int output_count;
     bool is_dirty;
+    bool is_running;
     bool evaluation_failed;
     bool has_evaluated;
+    bool has_evaluation_time;
+    double evaluation_time_ms;
+    uint64_t revision;
     bool text_editing;
     int editing_control;
     char parameter[128];
@@ -231,6 +237,7 @@ typedef struct {
     char open_dialog_path[MAX_PATH_LENGTH];
     char current_file[MAX_PATH_LENGTH];
     bool evaluation_error;
+    uint64_t next_revision;
     char status[160];
     InspectorWindow inspector_windows[MAX_INSPECTOR_WINDOWS];
     FileExplorerWindow file_explorer;

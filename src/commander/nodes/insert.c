@@ -54,10 +54,11 @@ static void TransformInsertedValue(const Node *node, const StreamValue *source, 
     if (node->insert_operation == INSERT_REPLACE_TEXT) {
         ReplaceAll(source->as.text, node->parameter, node->secondary_parameter, transformed, sizeof(transformed));
     } else if (node->insert_operation == INSERT_REPLACE_FILENAME && source->type == VALUE_STRING) {
-        const char *filename = GetFileName(source->as.text);
+        const char *filename = PathFileName(source->as.text);
         char new_filename[MAX_PATH_LENGTH] = {0};
         ReplaceAll(filename, node->parameter, node->secondary_parameter, new_filename, sizeof(new_filename));
-        const char *directory = GetDirectoryPath(source->as.text);
+        char directory[MAX_PATH_LENGTH];
+        CopyPathDirectory(source->as.text, directory, sizeof(directory));
         if (directory[0]) {
             TextCopy(transformed, directory);
             size_t used = strlen(transformed);
@@ -211,7 +212,7 @@ static void DrawInsertContent(GraphContext *graph, Node *node) {
         }
     }
 
-    const char *state_label = node->schema_error ? node->schema_error_message : node->is_dirty ? "NOT RUN" : "CURRENT";
+    const char *state_label = node->schema_error ? node->schema_error_message : NodeStateLabel(node);
     DrawInterfaceText(fonts.node_small, state_label, x, bounds.y + bounds.height - CanvasSize(graph, 21.0f),
                       ScaledFontSize(BODY_TEXT_SIZE * 0.82f, unit), NodeStateColor(node));
 }

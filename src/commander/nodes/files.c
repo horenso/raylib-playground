@@ -33,7 +33,7 @@ static void AppendFileRecord(Node *node, Port *output, const char *path) {
     StreamItem *item = &output->items[output->item_count++];
     memset(item, 0, sizeof(*item));
     SetTextValue(&item->values[0], VALUE_STRING, path);
-    SetTextValue(&item->values[1], VALUE_STRING, GetFileName(path));
+    SetTextValue(&item->values[1], VALUE_STRING, PathFileName(path));
     SetTextValue(&item->values[2], VALUE_STRING, is_folder ? "folder" : "file");
     item->values[3].type = VALUE_SIZE;
     item->values[3].as.file_size = is_folder ? 0 : (unsigned long long)info.st_size;
@@ -41,10 +41,15 @@ static void AppendFileRecord(Node *node, Port *output, const char *path) {
     item->values[4].as.datetime = (long long)info.st_mtime;
 }
 
-static void AppendDirectoryEntries(Node *node, Port *output, FilePathList entries) {
-    for (unsigned int i = 0; output && i < entries.count && output->item_count < MAX_ITEMS; i++) {
-        AppendFileRecord(node, output, entries.paths[i]);
-    }
+typedef struct {
+    Node *node;
+    Port *output;
+} FilesEvaluation;
+
+static bool AppendVisitedFile(const char *path, void *context) {
+    FilesEvaluation *evaluation = context;
+    AppendFileRecord(evaluation->node, evaluation->output, path);
+    return evaluation->output && evaluation->output->item_count < MAX_ITEMS;
 }
 
 // ============================================================
@@ -83,15 +88,8 @@ static bool EvaluateFiles(GraphContext *graph, Node *node, Port *source, Port *o
     const char *directory = NormalizeExistingPath(node->parameter, normalized_path, sizeof(normalized_path))
                                 ? normalized_path
                                 : node->parameter;
-    if (node->directory_recursive) {
-        FilePathList entries = LoadDirectoryFilesEx(directory, NULL, true);
-        AppendDirectoryEntries(node, output, entries);
-        UnloadDirectoryFiles(entries);
-    } else {
-        FilePathList entries = LoadDirectoryFiles(directory);
-        AppendDirectoryEntries(node, output, entries);
-        UnloadDirectoryFiles(entries);
-    }
+    FilesEvaluation evaluation = {.node = node, .output = output};
+    VisitDirectoryEntries(directory, node->directory_recursive, AppendVisitedFile, &evaluation);
     return true;
 }
 

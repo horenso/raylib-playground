@@ -100,6 +100,18 @@ static void SearchFileContent(Node *node, Port *output, const char *path, regex_
     fclose(f);
 }
 
+typedef struct {
+    Node *node;
+    Port *output;
+    regex_t *expression;
+} SearchEvaluation;
+
+static bool SearchVisitedFile(const char *path, void *context) {
+    SearchEvaluation *evaluation = context;
+    SearchFileContent(evaluation->node, evaluation->output, path, evaluation->expression);
+    return evaluation->output->item_count < MAX_ITEMS;
+}
+
 // ============================================================
 // Schema
 // ============================================================
@@ -165,11 +177,8 @@ static bool EvaluateSearchFiles(GraphContext *graph, Node *node, Port *source, P
 
     struct stat info;
     if (stat(search_path, &info) == 0 && S_ISDIR(info.st_mode)) {
-        FilePathList entries = LoadDirectoryFilesEx(search_path, NULL, true);
-        for (unsigned int i = 0; i < entries.count && output->item_count < MAX_ITEMS; i++) {
-            SearchFileContent(node, output, entries.paths[i], compiled_expression);
-        }
-        UnloadDirectoryFiles(entries);
+        SearchEvaluation evaluation = {.node = node, .output = output, .expression = compiled_expression};
+        VisitDirectoryEntries(search_path, true, SearchVisitedFile, &evaluation);
     } else if (stat(search_path, &info) == 0 && S_ISREG(info.st_mode)) {
         SearchFileContent(node, output, search_path, compiled_expression);
     }

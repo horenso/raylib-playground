@@ -10,6 +10,14 @@
 #include <string.h>
 #include <time.h>
 
+static uint64_t NextRevision(GraphContext *graph) {
+    graph->next_revision++;
+    if (graph->next_revision == 0) {
+        graph->next_revision++;
+    }
+    return graph->next_revision;
+}
+
 Node *FindNode(GraphContext *graph, int id) {
     for (int i = 0; i < graph->node_count; i++) {
         if (graph->nodes[i].id == id) {
@@ -113,6 +121,7 @@ Node *AddNode(GraphContext *graph, NodeType type, Vector2 position) {
     node->type = type;
     node->bounds = (Rectangle){position.x, position.y, 250, 164};
     node->is_dirty = true;
+    node->revision = NextRevision(graph);
     node->list_active = -1;
     node->editing_control = -1;
 
@@ -261,6 +270,7 @@ static void MarkDirtyRecursive(GraphContext *graph, int node_id, bool visited[MA
     visited[node_index] = true;
 
     graph->nodes[node_index].is_dirty = true;
+    graph->nodes[node_index].revision = NextRevision(graph);
     graph->nodes[node_index].evaluation_failed = false;
 
     for (int i = 0; i < graph->link_count; i++) {

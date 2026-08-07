@@ -149,6 +149,22 @@ static Rectangle NodeRunButtonBounds(GraphContext *graph, Node *node) {
     };
 }
 
+static void FormatNodeTiming(const Node *node, char *text, size_t capacity) {
+    if (node->is_running) {
+        snprintf(text, capacity, "running");
+    } else if (!node->has_evaluation_time) {
+        text[0] = '\0';
+    } else if (node->evaluation_time_ms < 0.01) {
+        snprintf(text, capacity, "<0.01 ms");
+    } else if (node->evaluation_time_ms < 1.0) {
+        snprintf(text, capacity, "%.2f ms", node->evaluation_time_ms);
+    } else if (node->evaluation_time_ms < 1000.0) {
+        snprintf(text, capacity, "%.1f ms", node->evaluation_time_ms);
+    } else {
+        snprintf(text, capacity, "%.2f s", node->evaluation_time_ms / 1000.0);
+    }
+}
+
 bool NodeOwnsMouse(GraphContext *graph, Node *node) {
     return graph->interaction_mode == INTERACTION_IDLE && !node->field_dropdown_open && !node->unit_dropdown_open &&
            !MouseOverAnyInspectorWindow(graph, GetMousePosition()) &&
@@ -220,6 +236,16 @@ void DrawNodeShell(GraphContext *graph, Node *node) {
     DrawInterfaceText(fonts.title, node->title, bounds.x + CanvasSize(graph, 14.0f),
                       bounds.y + FontTextCenterOffset(fonts.title, CanvasSize(graph, NODE_HEADER_HEIGHT)),
                       title_font_size, COLOR_TEXT);
+
+    char timing[32];
+    FormatNodeTiming(node, timing, sizeof(timing));
+    if (timing[0]) {
+        float timing_font_size = ScaledFontSize(BODY_TEXT_SIZE * 0.8f, unit);
+        float timing_width = MeasureTextEx(fonts.node_small, timing, timing_font_size, 0).x;
+        DrawInterfaceText(fonts.node_small, timing, run_btn.x - CanvasSize(graph, 8.0f) - timing_width,
+                          bounds.y + FontTextCenterOffset(fonts.node_small, CanvasSize(graph, NODE_HEADER_HEIGHT)),
+                          timing_font_size, node->is_running ? COLOR_NODE_SELECTED : COLOR_MUTED);
+    }
 
     bool run_hovered = NodeOwnsMouse(graph, node) && CheckCollisionPointRec(GetMousePosition(), run_btn);
     Color run_color = NodeStateColor(node);
@@ -545,8 +571,9 @@ bool DrawInspectorWindow(GraphContext *graph, InspectorWindow *win) {
     // GuiWindowBox draws the title bar + X button + panel body using the raygui theme.
     // It returns RESULT_PRESSED when the X button is clicked.
     SetGuiScale(unit);
-    const char *title = TextFormat("  %s  |  Stream<%s>  |  %d item%s", port->name, ValueTypeName(port->data_type),
-                                   port->item_count, port->item_count == 1 ? "" : "s");
+    const char *title =
+        TextFormat("  %s  |  Stream<%s>  |  %d item%s%s", port->name, ValueTypeName(port->data_type), port->item_count,
+                   port->item_count == 1 ? "" : "s", node->is_dirty && node->has_evaluated ? "  |  cached" : "");
     bool close_clicked = (GuiWindowBox(panel, title) != 0);
 
     // GuiWindowBox title bar is always RAYGUI_WINDOWBOX_STATUSBAR_HEIGHT (24px) tall.
@@ -554,16 +581,16 @@ bool DrawInspectorWindow(GraphContext *graph, InspectorWindow *win) {
     float title_h = 24.0f;
     Rectangle content = {panel.x + unit, panel.y + title_h, panel.width - unit * 2, panel.height - title_h - unit};
 
-    if (node->is_dirty && !node->has_evaluated) {
+    if (!node->has_evaluated && !node->evaluation_failed) {
+        if (node->is_running) {
+            DrawInspectorSpinner(graph, content);
+            return close_clicked;
+        }
         float text_size = ScaledFontSize(BODY_TEXT_SIZE, UiUnit(graph));
         const char *msg = "Not evaluated";
         Vector2 sz = MeasureTextEx(fonts.body, msg, text_size, 0);
         DrawInterfaceText(fonts.body, msg, content.x + (content.width - sz.x) * 0.5f,
                           content.y + (content.height - sz.y) * 0.5f, text_size, COLOR_MUTED);
-        return close_clicked;
-    }
-    if (node->is_dirty) {
-        DrawInspectorSpinner(graph, content);
         return close_clicked;
     }
 
@@ -1024,9 +1051,11 @@ void DrawPortHoverPreview(GraphContext *graph, int port_id) {
                      (Color){35, 41, 52, 255});
     float px = panel.x + UiSize(graph, 10.0f);
     float py = panel.y + FontTextCenterOffset(fonts.body, title_h);
+    Node *node = FindNode(graph, port->node_id);
     DrawInterfaceText(fonts.body,
-                      TextFormat("%s | Stream<%s> | %d item%s", port->name, ValueTypeName(port->data_type),
-                                 port->item_count, port->item_count == 1 ? "" : "s"),
+                      TextFormat("%s | Stream<%s> | %d item%s%s", port->name, ValueTypeName(port->data_type),
+                                 port->item_count, port->item_count == 1 ? "" : "s",
+                                 node && node->is_dirty && node->has_evaluated ? " | cached" : ""),
                       px, py, fonts.body_size, COLOR_TEXT);
 
     Rectangle list_bounds = {panel.x + UiSize(graph, 8.0f), panel.y + title_h + UiSize(graph, 2.0f),

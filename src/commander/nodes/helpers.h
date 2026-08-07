@@ -17,5 +17,13 @@ void ReadLines(FILE *stream, Port *port);
 // separators, ".", or ".." components.
 bool NormalizeExistingPath(const char *path, char *normalized, size_t capacity);
 
+// Visit directory entries without using raylib's main-thread-oriented file API.
+// Returning false from the visitor stops the walk successfully.
+typedef bool (*DirectoryEntryVisitor)(const char *path, void *context);
+bool VisitDirectoryEntries(const char *directory, bool recursive, DirectoryEntryVisitor visitor, void *context);
+
+const char *PathFileName(const char *path);
+void CopyPathDirectory(const char *path, char *directory, size_t capacity);
+
 // Return a short label reflecting the current evaluation state of a node.
 const char *NodeStateLabel(const Node *node);

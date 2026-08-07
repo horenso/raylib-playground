@@ -318,6 +318,13 @@ bool LoadGraph(GraphContext *graph, const char *path) {
     }
 
     PropagateSchemas(graph);
+    for (int i = 0; i < graph->node_count; i++) {
+        graph->next_revision++;
+        if (graph->next_revision == 0) {
+            graph->next_revision++;
+        }
+        graph->nodes[i].revision = graph->next_revision;
+    }
     fclose(f);
     return true;
 }
