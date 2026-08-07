@@ -2,22 +2,14 @@
 #include "graph.h"
 #include "node_def.h"
 #include "render.h"
+#include "resize.h"
 #include "streams.h"
 
 #include "raylib.h"
 #include "raymath.h"
 
-#include <math.h>
 #include <stdio.h>
 #include <string.h>
-
-enum {
-    NODE_RESIZE_NONE = 0,
-    NODE_RESIZE_LEFT = 1 << 0,
-    NODE_RESIZE_RIGHT = 1 << 1,
-    NODE_RESIZE_TOP = 1 << 2,
-    NODE_RESIZE_BOTTOM = 1 << 3,
-};
 
 static Vector2 NodeMinimumSize(const Node *node) {
     switch (node->type) {
@@ -43,37 +35,19 @@ static Vector2 NodeMinimumSize(const Node *node) {
 }
 
 static unsigned int NodeResizeEdgesAtMouse(GraphContext *graph, Node *node, Vector2 mouse) {
-    Rectangle bounds = NodeScreenBounds(graph, node);
-    float tolerance = UiSize(graph, 6.0f);
-    Rectangle hit_bounds = {bounds.x - tolerance, bounds.y - tolerance, bounds.width + tolerance * 2.0f,
-                            bounds.height + tolerance * 2.0f};
-    if (!CheckCollisionPointRec(mouse, hit_bounds)) {
-        return NODE_RESIZE_NONE;
-    }
-
-    unsigned int edges = NODE_RESIZE_NONE;
-    if (fabsf(mouse.x - bounds.x) <= tolerance) {
-        edges |= NODE_RESIZE_LEFT;
-    } else if (fabsf(mouse.x - (bounds.x + bounds.width)) <= tolerance) {
-        edges |= NODE_RESIZE_RIGHT;
-    }
-    if (fabsf(mouse.y - bounds.y) <= tolerance) {
-        edges |= NODE_RESIZE_TOP;
-    } else if (fabsf(mouse.y - (bounds.y + bounds.height)) <= tolerance) {
-        edges |= NODE_RESIZE_BOTTOM;
-    }
-    return edges;
+    return ResizeEdgesAtPoint(NodeScreenBounds(graph, node), mouse, UiSize(graph, 6.0f));
 }
 
 static Node *NodeAtResizeEdge(GraphContext *graph, Vector2 mouse, unsigned int *edges) {
-    *edges = NODE_RESIZE_NONE;
-    if (MouseOverAnyInspectorWindow(graph, mouse)) {
+    *edges = RESIZE_EDGE_NONE;
+    if (MouseOverAnyInspectorWindow(graph, mouse) ||
+        FloatingWindowResizeEdgesAtMouse(graph, mouse) != RESIZE_EDGE_NONE) {
         return NULL;
     }
     for (int i = graph->node_count - 1; i >= 0; i--) {
         Node *node = &graph->nodes[i];
         unsigned int hit = NodeResizeEdgesAtMouse(graph, node, mouse);
-        if (hit != NODE_RESIZE_NONE) {
+        if (hit != RESIZE_EDGE_NONE) {
             *edges = hit;
             return node;
         }
@@ -82,17 +56,6 @@ static Node *NodeAtResizeEdge(GraphContext *graph, Vector2 mouse, unsigned int *
         }
     }
     return NULL;
-}
-
-static int ResizeCursor(unsigned int edges) {
-    bool horizontal = (edges & (NODE_RESIZE_LEFT | NODE_RESIZE_RIGHT)) != 0;
-    bool vertical = (edges & (NODE_RESIZE_TOP | NODE_RESIZE_BOTTOM)) != 0;
-    if (horizontal && vertical) {
-        bool nwse = ((edges & NODE_RESIZE_LEFT) && (edges & NODE_RESIZE_TOP)) ||
-                    ((edges & NODE_RESIZE_RIGHT) && (edges & NODE_RESIZE_BOTTOM));
-        return nwse ? MOUSE_CURSOR_RESIZE_NWSE : MOUSE_CURSOR_RESIZE_NESW;
-    }
-    return horizontal ? MOUSE_CURSOR_RESIZE_EW : MOUSE_CURSOR_RESIZE_NS;
 }
 
 static bool MouseOverNodeTextBox(GraphContext *graph, Vector2 mouse) {
@@ -131,6 +94,9 @@ static InteractionMode ResolveInteractionMode(GraphContext *graph, bool panning)
     }
     if (graph->resizing_node_id > 0 && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
         return INTERACTION_RESIZING_NODE;
+    }
+    if (FloatingWindowResizeIsActive(graph) && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        return INTERACTION_RESIZING_WINDOW;
     }
     if (graph->dragging_node_id >= 0 && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
         return INTERACTION_DRAGGING_NODE;
@@ -258,23 +224,31 @@ static bool UpdateNodeDropdowns(GraphContext *graph, Vector2 mouse) {
 static void UpdateMouseCursor(GraphContext *graph, Vector2 mouse) {
     int cursor = MOUSE_CURSOR_DEFAULT;
     if (graph->interaction_mode == INTERACTION_RESIZING_NODE) {
-        cursor = ResizeCursor(graph->node_resize_edges);
+        cursor = MouseCursorForResizeEdges(graph->node_resize.edges);
+    } else if (graph->interaction_mode == INTERACTION_RESIZING_WINDOW) {
+        cursor = MouseCursorForResizeEdges(FloatingWindowResizeEdgesAtMouse(graph, mouse));
     } else if (graph->interaction_mode == INTERACTION_PANNING || graph->interaction_mode == INTERACTION_DRAGGING_NODE) {
         cursor = MOUSE_CURSOR_RESIZE_ALL;
     } else if (graph->interaction_mode == INTERACTION_KNIFE || graph->interaction_mode == INTERACTION_LINKING) {
         cursor = MOUSE_CURSOR_CROSSHAIR;
     } else {
+        unsigned int floating_resize_edges = FloatingWindowResizeEdgesAtMouse(graph, mouse);
         bool floating_window = MouseOverAnyInspectorWindow(graph, mouse);
         bool over_port =
             PortAtMouse(graph, mouse, PORT_DIR_INPUT) >= 0 || PortAtMouse(graph, mouse, PORT_DIR_OUTPUT) >= 0;
-        unsigned int resize_edges = NODE_RESIZE_NONE;
-        if (!floating_window && !over_port) {
-            NodeAtResizeEdge(graph, mouse, &resize_edges);
-        }
-        if (resize_edges != NODE_RESIZE_NONE) {
-            cursor = ResizeCursor(resize_edges);
-        } else if (MouseOverDialogTextBox(graph, mouse) || (!floating_window && MouseOverNodeTextBox(graph, mouse))) {
-            cursor = MOUSE_CURSOR_IBEAM;
+        unsigned int resize_edges = RESIZE_EDGE_NONE;
+        if (floating_resize_edges != RESIZE_EDGE_NONE) {
+            cursor = MouseCursorForResizeEdges(floating_resize_edges);
+        } else {
+            if (!floating_window && !over_port) {
+                NodeAtResizeEdge(graph, mouse, &resize_edges);
+            }
+            if (resize_edges != RESIZE_EDGE_NONE) {
+                cursor = MouseCursorForResizeEdges(resize_edges);
+            } else if (MouseOverDialogTextBox(graph, mouse) ||
+                       (!floating_window && MouseOverNodeTextBox(graph, mouse))) {
+                cursor = MOUSE_CURSOR_IBEAM;
+            }
         }
     }
 
@@ -389,8 +363,9 @@ void UpdateCanvas(GraphContext *graph) {
 
     // Inspector window drag: title-bar drag moves the window.
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && graph->interaction_mode == INTERACTION_IDLE) {
+        BeginFloatingWindowResizeAtMouse(graph, mouse);
         InspectorWindow *win = InspectorWindowTitleBarAtMouse(graph, mouse);
-        if (win && !win->resizing) {
+        if (win && !win->resize.active && FloatingWindowResizeEdgesAtMouse(graph, mouse) == RESIZE_EDGE_NONE) {
             win->dragging = true;
             win->drag_offset = (Vector2){mouse.x - win->pos.x, mouse.y - win->pos.y};
         }
@@ -408,11 +383,13 @@ void UpdateCanvas(GraphContext *graph) {
         }
     }
 
-    if (!dropdown_owns_mouse && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && in_canvas &&
+    bool floating_window_owns_mouse = MouseOverAnyInspectorWindow(graph, mouse) ||
+                                      FloatingWindowResizeEdgesAtMouse(graph, mouse) != RESIZE_EDGE_NONE;
+    if (!dropdown_owns_mouse && !floating_window_owns_mouse && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && in_canvas &&
         graph->interaction_mode == INTERACTION_IDLE) {
         int output = PortAtMouse(graph, mouse, PORT_DIR_OUTPUT);
         int input = PortAtMouse(graph, mouse, PORT_DIR_INPUT);
-        unsigned int resize_edges = NODE_RESIZE_NONE;
+        unsigned int resize_edges = RESIZE_EDGE_NONE;
         Node *resize_node = output < 0 && input < 0 ? NodeAtResizeEdge(graph, mouse, &resize_edges) : NULL;
         int node_id = NodeAtMouse(graph, mouse);
         Node *node = FindNode(graph, node_id);
@@ -436,9 +413,8 @@ void UpdateCanvas(GraphContext *graph) {
         } else if (resize_node) {
             graph->selected_node_id = resize_node->id;
             graph->resizing_node_id = resize_node->id;
-            graph->node_resize_edges = resize_edges;
-            graph->node_resize_start_bounds = resize_node->bounds;
-            graph->node_resize_start_mouse = GetScreenToWorld2D(mouse, CanvasCamera(graph));
+            BeginRectangleResize(&graph->node_resize, resize_node->bounds,
+                                 GetScreenToWorld2D(mouse, CanvasCamera(graph)), resize_edges);
             CloseNodeEditors(graph, -1);
             TextCopy(graph->status, "Resizing node");
             BringNodeToFront(graph, resize_node->id);
@@ -492,25 +468,8 @@ void UpdateCanvas(GraphContext *graph) {
         Node *node = FindNode(graph, graph->resizing_node_id);
         if (node) {
             Vector2 world_mouse = GetScreenToWorld2D(mouse, CanvasCamera(graph));
-            Vector2 delta = Vector2Subtract(world_mouse, graph->node_resize_start_mouse);
-            Rectangle start = graph->node_resize_start_bounds;
-            Rectangle resized = start;
             Vector2 minimum = NodeMinimumSize(node);
-
-            if (graph->node_resize_edges & NODE_RESIZE_LEFT) {
-                float right = start.x + start.width;
-                resized.x = fminf(start.x + delta.x, right - minimum.x);
-                resized.width = right - resized.x;
-            } else if (graph->node_resize_edges & NODE_RESIZE_RIGHT) {
-                resized.width = fmaxf(minimum.x, start.width + delta.x);
-            }
-            if (graph->node_resize_edges & NODE_RESIZE_TOP) {
-                float bottom = start.y + start.height;
-                resized.y = fminf(start.y + delta.y, bottom - minimum.y);
-                resized.height = bottom - resized.y;
-            } else if (graph->node_resize_edges & NODE_RESIZE_BOTTOM) {
-                resized.height = fmaxf(minimum.y, start.height + delta.y);
-            }
+            Rectangle resized = RectangleResizeBounds(&graph->node_resize, world_mouse, minimum, (Vector2){0});
 
             node->bounds = resized;
             for (int i = 0; i < node->output_count; i++) {
@@ -521,7 +480,7 @@ void UpdateCanvas(GraphContext *graph) {
             }
         } else {
             graph->resizing_node_id = -1;
-            graph->node_resize_edges = NODE_RESIZE_NONE;
+            graph->node_resize.active = false;
         }
     }
 
@@ -529,7 +488,7 @@ void UpdateCanvas(GraphContext *graph) {
         bool resized_node = graph->resizing_node_id > 0;
         graph->dragging_node_id = -1;
         graph->resizing_node_id = -1;
-        graph->node_resize_edges = NODE_RESIZE_NONE;
+        graph->node_resize.active = false;
         if (resized_node) {
             TextCopy(graph->status, "Node resized");
         }

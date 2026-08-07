@@ -222,7 +222,7 @@ void RemoveNode(GraphContext *graph, int node_id) {
     graph->dragging_node_id = -1;
     if (graph->resizing_node_id == node_id) {
         graph->resizing_node_id = -1;
-        graph->node_resize_edges = 0;
+        graph->node_resize.active = false;
     }
     graph->active_port_id = -1;
     TextCopy(graph->status, "Node deleted");

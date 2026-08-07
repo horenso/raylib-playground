@@ -136,6 +136,10 @@ static void InitSearchFiles(GraphContext *graph, Node *node) {
 
 static bool EvaluateSearchFiles(GraphContext *graph, Node *node, Port *source, Port *output) {
     (void)source;
+    char normalized_path[MAX_PATH_LENGTH];
+    const char *search_path = NormalizeExistingPath(node->parameter, normalized_path, sizeof(normalized_path))
+                                  ? normalized_path
+                                  : node->parameter;
     const char *pattern = node->secondary_parameter;
     if (!pattern[0]) {
         // No pattern — emit nothing rather than matching everything.
@@ -160,14 +164,14 @@ static bool EvaluateSearchFiles(GraphContext *graph, Node *node, Port *source, P
     }
 
     struct stat info;
-    if (stat(node->parameter, &info) == 0 && S_ISDIR(info.st_mode)) {
-        FilePathList entries = LoadDirectoryFilesEx(node->parameter, NULL, true);
+    if (stat(search_path, &info) == 0 && S_ISDIR(info.st_mode)) {
+        FilePathList entries = LoadDirectoryFilesEx(search_path, NULL, true);
         for (unsigned int i = 0; i < entries.count && output->item_count < MAX_ITEMS; i++) {
             SearchFileContent(node, output, entries.paths[i], compiled_expression);
         }
         UnloadDirectoryFiles(entries);
-    } else if (stat(node->parameter, &info) == 0 && S_ISREG(info.st_mode)) {
-        SearchFileContent(node, output, node->parameter, compiled_expression);
+    } else if (stat(search_path, &info) == 0 && S_ISREG(info.st_mode)) {
+        SearchFileContent(node, output, search_path, compiled_expression);
     }
     if (compiled_expression) {
         regfree(&expression);

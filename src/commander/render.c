@@ -3,6 +3,7 @@
 #include "fonts.h"
 #include "graph.h"
 #include "node_def.h"
+#include "resize.h"
 #include "serialize.h"
 #include "streams.h"
 
@@ -496,6 +497,25 @@ static Rectangle InspectorWindowBounds(GraphContext *graph, InspectorWindow *win
     return (Rectangle){win->pos.x, win->pos.y, w, h};
 }
 
+static Rectangle UpdateFloatingWindowResize(GraphContext *graph, Rectangle bounds, Vector2 minimum,
+                                            ResizeState *resize, Vector2 *position, Vector2 *size) {
+    Vector2 mouse = GetMousePosition();
+    if (!resize->active) {
+        return bounds;
+    }
+    if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        resize->active = false;
+        return bounds;
+    }
+
+    Vector2 maximum = {(float)GetScreenWidth() - UiSize(graph, 24.0f),
+                       (float)GetScreenHeight() - UiSize(graph, 48.0f)};
+    Rectangle resized = RectangleResizeBounds(resize, mouse, minimum, maximum);
+    *position = (Vector2){resized.x, resized.y};
+    *size = (Vector2){resized.width, resized.height};
+    return resized;
+}
+
 static void DrawInspectorSpinner(GraphContext *graph, Rectangle area) {
     float cx = area.x + area.width * 0.5f;
     float cy = area.y + area.height * 0.5f;
@@ -519,6 +539,8 @@ bool DrawInspectorWindow(GraphContext *graph, InspectorWindow *win) {
 
     float unit = UiUnit(graph);
     Rectangle panel = InspectorWindowBounds(graph, win);
+    panel = UpdateFloatingWindowResize(graph, panel, (Vector2){UiSize(graph, 200.0f), UiSize(graph, 120.0f)},
+                                       &win->resize, &win->pos, &win->size);
 
     // GuiWindowBox draws the title bar + X button + panel body using the raygui theme.
     // It returns RESULT_PRESSED when the X button is clicked.
@@ -790,22 +812,6 @@ bool DrawInspectorWindow(GraphContext *graph, InspectorWindow *win) {
     float rh = UiSize(graph, 12.0f);
     Vector2 br = {panel.x + panel.width, panel.y + panel.height};
     DrawTriangle((Vector2){br.x - rh, br.y}, (Vector2){br.x, br.y - rh}, br, (Color){75, 84, 101, 255});
-    Rectangle resize_zone = {br.x - rh, br.y - rh, rh, rh};
-    if (left_pressed && CheckCollisionPointRec(mouse, resize_zone)) {
-        win->resizing = true;
-        win->resize_start_mouse = mouse;
-        win->resize_start_size = (Vector2){panel.width, panel.height};
-    }
-    if (win->resizing) {
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-            float dw = mouse.x - win->resize_start_mouse.x;
-            float dh = mouse.y - win->resize_start_mouse.y;
-            win->size.x = win->resize_start_size.x + dw;
-            win->size.y = win->resize_start_size.y + dh;
-        } else {
-            win->resizing = false;
-        }
-    }
 
     return close_clicked;
 }
@@ -890,6 +896,9 @@ bool DrawFileExplorerWindow(GraphContext *graph) {
 
     float unit = UiUnit(graph);
     Vector2 mouse = GetMousePosition();
+    Rectangle panel = FileExplorerBounds(graph);
+    panel = UpdateFloatingWindowResize(graph, panel, (Vector2){UiSize(graph, 320.0f), UiSize(graph, 220.0f)},
+                                       &win->resize, &win->pos, &win->size);
     if (win->dragging) {
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
             win->pos = (Vector2){mouse.x - win->drag_offset.x, mouse.y - win->drag_offset.y};
@@ -898,10 +907,9 @@ bool DrawFileExplorerWindow(GraphContext *graph) {
         }
     }
 
-    Rectangle panel = FileExplorerBounds(graph);
     float title_height = 24.0f;
     Rectangle title_bar = {panel.x, panel.y, panel.width - title_height, title_height};
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !win->resizing && CheckCollisionPointRec(mouse, title_bar)) {
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !win->resize.active && CheckCollisionPointRec(mouse, title_bar)) {
         win->dragging = true;
         win->drag_offset = (Vector2){mouse.x - win->pos.x, mouse.y - win->pos.y};
     }
@@ -978,21 +986,6 @@ bool DrawFileExplorerWindow(GraphContext *graph) {
     Vector2 bottom_right = {panel.x + panel.width, panel.y + panel.height};
     DrawTriangle((Vector2){bottom_right.x - resize_handle, bottom_right.y},
                  (Vector2){bottom_right.x, bottom_right.y - resize_handle}, bottom_right, (Color){75, 84, 101, 255});
-    Rectangle resize_zone = {bottom_right.x - resize_handle, bottom_right.y - resize_handle, resize_handle,
-                             resize_handle};
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mouse, resize_zone)) {
-        win->resizing = true;
-        win->resize_start_mouse = mouse;
-        win->resize_start_size = (Vector2){panel.width, panel.height};
-    }
-    if (win->resizing) {
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-            win->size = (Vector2){win->resize_start_size.x + mouse.x - win->resize_start_mouse.x,
-                                  win->resize_start_size.y + mouse.y - win->resize_start_mouse.y};
-        } else {
-            win->resizing = false;
-        }
-    }
     return close_clicked || !win->open;
 }
 
@@ -1189,6 +1182,88 @@ bool MouseOverAnyInspectorWindow(GraphContext *graph, Vector2 mouse) {
         }
         if (CheckCollisionPointRec(mouse, InspectorWindowBounds(graph, win))) {
             return true;
+        }
+    }
+    return false;
+}
+
+unsigned int FloatingWindowResizeEdgesAtMouse(GraphContext *graph, Vector2 mouse) {
+    float tolerance = UiSize(graph, 6.0f);
+    FileExplorerWindow *explorer = &graph->file_explorer;
+    if (explorer->open && explorer->resize.active && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        return explorer->resize.edges;
+    }
+    for (int i = MAX_INSPECTOR_WINDOWS - 1; i >= 0; i--) {
+        InspectorWindow *win = &graph->inspector_windows[i];
+        if (win->port_id > 0 && win->resize.active && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            return win->resize.edges;
+        }
+    }
+
+    if (explorer->open) {
+        Rectangle bounds = FileExplorerBounds(graph);
+        unsigned int edges = ResizeEdgesAtPoint(bounds, mouse, tolerance);
+        if (edges != RESIZE_EDGE_NONE || CheckCollisionPointRec(mouse, bounds)) {
+            return edges;
+        }
+    }
+
+    for (int i = MAX_INSPECTOR_WINDOWS - 1; i >= 0; i--) {
+        InspectorWindow *win = &graph->inspector_windows[i];
+        if (win->port_id <= 0) {
+            continue;
+        }
+        Rectangle bounds = InspectorWindowBounds(graph, win);
+        unsigned int edges = ResizeEdgesAtPoint(bounds, mouse, tolerance);
+        if (edges != RESIZE_EDGE_NONE || CheckCollisionPointRec(mouse, bounds)) {
+            return edges;
+        }
+    }
+    return RESIZE_EDGE_NONE;
+}
+
+bool FloatingWindowResizeIsActive(GraphContext *graph) {
+    if (graph->file_explorer.open && graph->file_explorer.resize.active) {
+        return true;
+    }
+    for (int i = 0; i < MAX_INSPECTOR_WINDOWS; i++) {
+        if (graph->inspector_windows[i].port_id > 0 && graph->inspector_windows[i].resize.active) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool BeginFloatingWindowResizeAtMouse(GraphContext *graph, Vector2 mouse) {
+    float tolerance = UiSize(graph, 6.0f);
+    FileExplorerWindow *explorer = &graph->file_explorer;
+    if (explorer->open) {
+        Rectangle bounds = FileExplorerBounds(graph);
+        unsigned int edges = ResizeEdgesAtPoint(bounds, mouse, tolerance);
+        if (edges != RESIZE_EDGE_NONE) {
+            BeginRectangleResize(&explorer->resize, bounds, mouse, edges);
+            explorer->dragging = false;
+            return true;
+        }
+        if (CheckCollisionPointRec(mouse, bounds)) {
+            return false;
+        }
+    }
+
+    for (int i = MAX_INSPECTOR_WINDOWS - 1; i >= 0; i--) {
+        InspectorWindow *win = &graph->inspector_windows[i];
+        if (win->port_id <= 0) {
+            continue;
+        }
+        Rectangle bounds = InspectorWindowBounds(graph, win);
+        unsigned int edges = ResizeEdgesAtPoint(bounds, mouse, tolerance);
+        if (edges != RESIZE_EDGE_NONE) {
+            BeginRectangleResize(&win->resize, bounds, mouse, edges);
+            win->dragging = false;
+            return true;
+        }
+        if (CheckCollisionPointRec(mouse, bounds)) {
+            return false;
         }
     }
     return false;

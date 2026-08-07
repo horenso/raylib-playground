@@ -1,6 +1,7 @@
 #include "helpers.h"
 #include "streams.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 void AppendPrimitiveText(Port *port, const char *text, size_t length) {
@@ -22,6 +23,24 @@ void ReadLines(FILE *stream, Port *port) {
     while (port && port->item_count < MAX_ITEMS && fgets(line, sizeof(line), stream)) {
         AppendPrimitiveText(port, line, strlen(line));
     }
+}
+
+bool NormalizeExistingPath(const char *path, char *normalized, size_t capacity) {
+    if (!path || !path[0] || !normalized || capacity == 0) {
+        return false;
+    }
+    char *resolved = realpath(path, NULL);
+    if (!resolved) {
+        return false;
+    }
+    size_t length = strlen(resolved);
+    if (length >= capacity) {
+        free(resolved);
+        return false;
+    }
+    memcpy(normalized, resolved, length + 1);
+    free(resolved);
+    return true;
 }
 
 const char *NodeStateLabel(const Node *node) {

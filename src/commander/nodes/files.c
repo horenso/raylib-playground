@@ -79,12 +79,16 @@ static void InitFiles(GraphContext *graph, Node *node) {
 static bool EvaluateFiles(GraphContext *graph, Node *node, Port *source, Port *output) {
     (void)graph;
     (void)source;
+    char normalized_path[MAX_PATH_LENGTH];
+    const char *directory = NormalizeExistingPath(node->parameter, normalized_path, sizeof(normalized_path))
+                                ? normalized_path
+                                : node->parameter;
     if (node->directory_recursive) {
-        FilePathList entries = LoadDirectoryFilesEx(node->parameter, NULL, true);
+        FilePathList entries = LoadDirectoryFilesEx(directory, NULL, true);
         AppendDirectoryEntries(node, output, entries);
         UnloadDirectoryFiles(entries);
     } else {
-        FilePathList entries = LoadDirectoryFiles(node->parameter);
+        FilePathList entries = LoadDirectoryFiles(directory);
         AppendDirectoryEntries(node, output, entries);
         UnloadDirectoryFiles(entries);
     }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config.h"
+#include "resize.h"
 
 #include "raylib.h"
 
@@ -28,9 +29,7 @@ typedef struct {
     int active;
     bool dragging;
     Vector2 drag_offset; // mouse-to-panel-origin delta at drag start
-    bool resizing;
-    Vector2 resize_start_mouse;
-    Vector2 resize_start_size;
+    ResizeState resize;
     bool scrollbar_dragging;
     float scrollbar_drag_start_y;
     int scrollbar_drag_start_scroll;
@@ -52,9 +51,7 @@ typedef struct {
     double last_click_time;
     bool dragging;
     Vector2 drag_offset;
-    bool resizing;
-    Vector2 resize_start_mouse;
-    Vector2 resize_start_size;
+    ResizeState resize;
 } FileExplorerWindow;
 
 typedef enum {
@@ -154,6 +151,7 @@ typedef enum {
     INTERACTION_KNIFE,
     INTERACTION_DRAGGING_NODE,
     INTERACTION_RESIZING_NODE,
+    INTERACTION_RESIZING_WINDOW,
     INTERACTION_LINKING,
 } InteractionMode;
 
@@ -224,9 +222,7 @@ typedef struct {
     int dragging_node_id;
     Vector2 drag_offset;
     int resizing_node_id;
-    unsigned int node_resize_edges;
-    Rectangle node_resize_start_bounds;
-    Vector2 node_resize_start_mouse;
+    ResizeState node_resize;
     bool knife_active;
     Vector2 knife_start;
     bool add_menu_open;
