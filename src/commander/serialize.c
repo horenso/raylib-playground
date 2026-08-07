@@ -92,6 +92,16 @@ bool SaveGraph(GraphContext *graph, const char *path) {
                 field_esc[0] ? field_esc : "-");
     }
 
+    for (int i = 0; i < graph->node_count; i++) {
+        Node *n = &graph->nodes[i];
+        if (n->type != NODE_SEARCH_FILES) {
+            continue;
+        }
+        char pattern_esc[512];
+        escape(n->secondary_parameter, pattern_esc, sizeof(pattern_esc));
+        fprintf(f, "search_config %d %s\n", n->id, pattern_esc[0] ? pattern_esc : "-");
+    }
+
     for (int i = 0; i < graph->port_count; i++) {
         Port *p = &graph->ports[i];
         char name_esc[64];
@@ -199,6 +209,20 @@ bool LoadGraph(GraphContext *graph, const char *path) {
                     n->filter_use_regex = true;
                     n->filter_exclude = false;
                 }
+            }
+
+        } else if (strcmp(tag, "search_config") == 0) {
+            int node_id;
+            char pattern_esc[512] = {0};
+            if (sscanf(line, "%*s %d %511s", &node_id, pattern_esc) < 2) {
+                continue;
+            }
+            Node *n = FindNode(graph, node_id);
+            if (!n || n->type != NODE_SEARCH_FILES) {
+                continue;
+            }
+            if (!TextIsEqual(pattern_esc, "-")) {
+                unescape(pattern_esc, n->secondary_parameter, sizeof(n->secondary_parameter));
             }
 
         } else if (strcmp(tag, "filter_config") == 0 || strcmp(tag, "match_config") == 0) {

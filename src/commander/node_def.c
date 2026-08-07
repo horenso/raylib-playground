@@ -20,6 +20,7 @@ extern const NodeDef kInsertNodeDef;
 extern const NodeDef kGetNodeDef;
 extern const NodeDef kCsvNodeDef;
 extern const NodeDef kStringifyNodeDef;
+extern const NodeDef kSearchFilesNodeDef;
 
 // The registry is indexed by NodeType enum value.
 // NODE_LEGACY_NUMBER_FILTER has a NULL entry — it cannot be created
@@ -28,6 +29,7 @@ static const NodeDef *NODE_REGISTRY[] = {
     [NODE_DIRECTORY_LIST] = &kFilesNodeDef, [NODE_FILTER] = &kFilterNodeDef, [NODE_EXEC] = &kExecNodeDef,
     [NODE_HTTP_REQUEST] = &kHttpNodeDef,    [NODE_INSERT] = &kInsertNodeDef, [NODE_GET] = &kGetNodeDef,
     [NODE_LEGACY_NUMBER_FILTER] = NULL,     [NODE_CSV] = &kCsvNodeDef,       [NODE_STRINGIFY] = &kStringifyNodeDef,
+    [NODE_SEARCH_FILES] = &kSearchFilesNodeDef,
 };
 
 const NodeDef *GetNodeDef(NodeType type) {
